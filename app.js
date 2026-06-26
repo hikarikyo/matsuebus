@@ -138,20 +138,23 @@
       routeTitle = longName;
     }
     
-    // 系統番号が31番の場合の特別補正（一畑バスのデータ構造バグ対応）
-    if (shortName === '31' && route.agency_id === '7280001000972') {
-      const tripStopTimes = stopTimesByTripId[trip.trip_id] || [];
-      if (tripStopTimes.length > 0) {
-        const startStopId = tripStopTimes[0].stop_id;
-        const startStopName = stopNameById[startStopId] || '';
-        const lastStopId = tripStopTimes[tripStopTimes.length - 1].stop_id;
-        const lastStopName = stopNameById[lastStopId] || '';
-        
-        if (startStopName.includes('八雲') || lastStopName.includes('八雲')) {
-          routeTitle = '八雲';
-        } else if (startStopName.includes('玉造') || lastStopName.includes('玉造')) {
-          routeTitle = '玉造';
-          shortName = ''; // 玉造線には系統番号がないため、[31]を表示させず「玉造」のみとする
+    // 一畑バスの特別補正（データ構造不整合対応）
+    if (route.agency_id === '7280001000972') {
+      if (longName.includes('【玉造】')) {
+        const tripStopTimes = stopTimesByTripId[trip.trip_id] || [];
+        if (tripStopTimes.length > 0) {
+          const startStopId = tripStopTimes[0].stop_id;
+          const startStopName = stopNameById[startStopId] || '';
+          const lastStopId = tripStopTimes[tripStopTimes.length - 1].stop_id;
+          const lastStopName = stopNameById[lastStopId] || '';
+          
+          if (startStopName.includes('八雲') || lastStopName.includes('八雲')) {
+            routeTitle = '八雲';
+            shortName = '31'; // 八雲線は系統番号31を正しく表示
+          } else {
+            routeTitle = '玉造';
+            shortName = ''; // 玉造線には系統番号がないため、系統番号を表示しない
+          }
         }
       }
     }
