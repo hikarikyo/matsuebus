@@ -127,7 +127,7 @@
    */
   function getDisplayRouteName(trip, route) {
     if (!route) return '路線バス';
-    const shortName = route.route_short_name || '';
+    let shortName = route.route_short_name || '';
     const longName = route.route_long_name || '';
     
     let routeTitle = '';
@@ -151,6 +151,7 @@
           routeTitle = '八雲';
         } else if (startStopName.includes('玉造') || lastStopName.includes('玉造')) {
           routeTitle = '玉造';
+          shortName = ''; // 玉造線には系統番号がないため、[31]を表示させず「玉造」のみとする
         }
       }
     }
