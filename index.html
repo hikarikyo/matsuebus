@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>松江・出雲バスナビ - 路線バス時刻検索</title>
+  <meta name="description" content="松江市・出雲市の路線バス時刻表を簡単に検索。発車時刻表の確認や経路検索が可能です。" />
+  <link rel="stylesheet" href="style.css?v=2" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚌</text></svg>" />
+</head>
+<body>
+  <!-- ヘッダー -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <span class="header-logo">🚌</span>
+        <div>
+          <div class="header-title">松江・出雲バスナビ</div>
+          <div class="header-subtitle">MATSUE & IZUMO BUS NAVIGATOR</div>
+        </div>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" aria-label="テーマ切り替え">🌙</button>
+    </div>
+  </header>
+
+  <!-- タブナビゲーション -->
+  <nav class="nav-tabs" aria-label="メインナビゲーション">
+    <div class="nav-tabs-inner">
+      <button class="tab-btn active" data-tab="timetable" aria-selected="true">
+        <span class="tab-btn-icon">🕐</span>
+        <span>時刻表</span>
+      </button>
+      <button class="tab-btn" data-tab="route" aria-selected="false">
+        <span class="tab-btn-icon">🗺️</span>
+        <span>経路検索</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- メインコンテンツ -->
+  <main class="main-content">
+
+    <!-- ===== 時刻表タブ ===== -->
+    <section id="timetable-tab" class="tab-pane active" aria-label="時刻表">
+      <!-- 検索ボックス -->
+      <div class="search-container">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            id="stop-search-input"
+            class="search-input"
+            placeholder="バス停・駅名を入力..."
+            autocomplete="off"
+            aria-label="バス停検索"
+          />
+          <button id="stop-search-clear" class="search-clear" aria-label="クリア">✕</button>
+        </div>
+        <div id="stop-search-results" class="autocomplete-dropdown" role="listbox"></div>
+      </div>
+
+      <!-- クイックアクセス -->
+      <div class="section-label">よく使うバス停</div>
+      <div class="quick-stops">
+        <button class="quick-stop-btn" data-query="コーポ一畑入口">🏢 コーポ一畑入口</button>
+        <button class="quick-stop-btn" data-query="松江駅">🚉 松江駅</button>
+      </div>
+
+      <!-- 発車時刻表示エリア -->
+      <div id="departures-container"></div>
+    </section>
+
+    <!-- ===== 経路検索タブ ===== -->
+    <section id="route-tab" class="tab-pane" aria-label="経路検索">
+      <div class="glass-card">
+        <div class="route-form">
+          <!-- 出発地 -->
+          <div class="route-input-group">
+            <label class="route-input-label" for="route-from-input">出発</label>
+            <span class="route-input-icon">📍</span>
+            <input
+              type="text"
+              id="route-from-input"
+              class="route-input"
+              placeholder="出発地を入力..."
+              autocomplete="off"
+            />
+            <div id="route-from-results" class="autocomplete-dropdown" role="listbox"></div>
+          </div>
+
+          <!-- 入れ替えボタン -->
+          <div style="display:flex; justify-content:center; margin: -6px 0;">
+            <button id="route-swap-btn" class="route-swap-btn" aria-label="出発地と目的地を入れ替え" title="入れ替え">⇅</button>
+          </div>
+
+          <!-- 目的地 -->
+          <div class="route-input-group">
+            <label class="route-input-label" for="route-to-input">到着</label>
+            <span class="route-input-icon">🏁</span>
+            <input
+              type="text"
+              id="route-to-input"
+              class="route-input"
+              placeholder="目的地を入力..."
+              autocomplete="off"
+            />
+            <div id="route-to-results" class="autocomplete-dropdown" role="listbox"></div>
+          </div>
+
+          <!-- 日時・オプション -->
+          <div class="route-options">
+            <div>
+              <label class="route-input-label" for="route-date">日付</label>
+              <input type="date" id="route-date" class="route-option-input" />
+            </div>
+            <div>
+              <label class="route-input-label" for="route-time">時刻</label>
+              <input type="time" id="route-time" class="route-option-input" />
+            </div>
+            <div>
+              <label class="route-input-label" for="route-type">検索種別</label>
+              <select id="route-type" class="route-option-select">
+                <option value="departure">出発時刻指定</option>
+                <option value="arrival">到着時刻指定</option>
+                <option value="first">始発</option>
+                <option value="last">終電・終バス</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 検索ボタン -->
+          <button id="route-search-btn" class="route-search-btn">
+            <span>🔍</span>
+            <span>経路を検索</span>
+          </button>
+      </div>
+      </div>
+
+      <!-- よく使う経路（クイック検索） -->
+      <div class="section-label">よく使う経路</div>
+      <div class="quick-routes">
+        <button class="quick-route-btn" data-from="コーポ一畑入口" data-to="松江駅">🏢 コーポ一畑入口 ➔ 🚉 松江駅</button>
+        <button class="quick-route-btn" data-from="松江駅" data-to="コーポ一畑入口">🚉 松江駅 ➔ 🏢 コーポ一畑入口</button>
+      </div>
+
+      <!-- 検索結果 -->
+      <div id="route-results-container"></div>
+    </section>
+
+  </main>
+
+  <!-- ローディング表示 -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">バスデータを読み込み中...</div>
+    <div id="loading-progress" class="loading-progress">データをダウンロードしています (0%)</div>
+  </div>
+
+  <footer class="footer">
+    <p>交通データは松江市交通局および一畑バスの標準的なバス情報フォーマット（GTFS-JP）に基づいています。</p>
+    <p>データ提供: <a href="https://matsue-bus.jp/opendata" target="_blank" rel="noopener">松江市交通局オープンデータ</a></p>
+  </footer>
+
+  <!-- 事前パース済みGTFSデータ & アプリメインロジック -->
+  <script src="gtfs_data.js"></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>
