@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  console.log('松江・出雲バスナビ v20260627-0845 Loaded');
+  console.log('松江・出雲バスナビ v20260627-0855 Loaded');
 
   // ===== 定数とストレージキー =====
   const STORAGE_KEY_THEME = 'matsue-local-bus-theme';
@@ -144,19 +144,25 @@
     if (route.agency_id === '7280001000972') {
       if (longName.includes('【玉造】')) {
         const tripStopTimes = stopTimesByTripId[trip.trip_id] || [];
+        console.log(`[31 Debug] Trip: ${trip.trip_id}, Times count: ${tripStopTimes.length}`);
         if (tripStopTimes.length > 0) {
           const startStopId = tripStopTimes[0].stop_id;
           const startStopName = stopNameById[startStopId] || '';
           const lastStopId = tripStopTimes[tripStopTimes.length - 1].stop_id;
           const lastStopName = stopNameById[lastStopId] || '';
+          console.log(`[31 Debug] Start stop: ${startStopName}, End stop: ${lastStopName}`);
           
           if (startStopName.includes('八雲') || lastStopName.includes('八雲')) {
             routeTitle = '八雲';
             shortName = '31'; // 八雲線は系統番号31を正しく表示
+            console.log(`[31 Debug] -> Corrected to [31] 八雲`);
           } else {
             routeTitle = '玉造';
             shortName = ''; // 玉造線には系統番号がないため、系統番号を表示しない
+            console.log(`[31 Debug] -> Corrected to 玉造`);
           }
+        } else {
+          console.log(`[31 Debug] -> No stop times found! default to: [${shortName}] ${routeTitle}`);
         }
       }
     }
