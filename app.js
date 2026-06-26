@@ -144,10 +144,13 @@
       if (tripStopTimes.length > 0) {
         const startStopId = tripStopTimes[0].stop_id;
         const startStopName = stopNameById[startStopId] || '';
-        if (startStopName.includes('八雲')) {
-          routeTitle = '八雲（市内行）';
-        } else if (startStopName.includes('玉造')) {
-          routeTitle = '玉造（市内行）';
+        const lastStopId = tripStopTimes[tripStopTimes.length - 1].stop_id;
+        const lastStopName = stopNameById[lastStopId] || '';
+        
+        if (startStopName.includes('八雲') || lastStopName.includes('八雲')) {
+          routeTitle = '八雲';
+        } else if (startStopName.includes('玉造') || lastStopName.includes('玉造')) {
+          routeTitle = '玉造';
         }
       }
     }
