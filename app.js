@@ -7,6 +7,8 @@
 (() => {
   'use strict';
 
+  console.log('松江・出雲バスナビ v20260627-0845 Loaded');
+
   // ===== 定数とストレージキー =====
   const STORAGE_KEY_THEME = 'matsue-local-bus-theme';
   const DEBOUNCE_MS = 200;
