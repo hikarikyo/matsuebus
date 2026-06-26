@@ -727,11 +727,6 @@
       onSelect: handleStopSelected
     });
 
-    $$('.quick-stop-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        timetableAC.setQuery(btn.dataset.query);
-      });
-    });
 
     const routeFromAC = initAutocomplete({
       input: $('#route-from-input'),
@@ -757,14 +752,6 @@
     $('#route-date').value = todayISO();
     $('#route-time').value = nowHHMM();
 
-    // よく使う経路ボタン
-    $$('.quick-route-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        $('#route-from-input').value = btn.dataset.from;
-        $('#route-to-input').value = btn.dataset.to;
-        handleRouteSearch();
-      });
-    });
   }
 
   // ===== メイン初期化 & イベントリスニング =====
