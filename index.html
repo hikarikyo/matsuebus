@@ -56,6 +56,10 @@
               autocomplete="off"
             />
             <div id="route-from-results" class="autocomplete-dropdown" role="listbox"></div>
+            <div class="route-quick-inputs">
+              <button type="button" class="route-quick-btn" id="btn-route-from-matsue">🚉 松江駅</button>
+              <button type="button" class="route-quick-btn" id="btn-route-from-nearby">📍 現在地近く</button>
+            </div>
           </div>
 
           <!-- 入れ替えボタン -->
@@ -75,6 +79,10 @@
               autocomplete="off"
             />
             <div id="route-to-results" class="autocomplete-dropdown" role="listbox"></div>
+            <div class="route-quick-inputs">
+              <button type="button" class="route-quick-btn" id="btn-route-to-matsue">🚉 松江駅</button>
+              <button type="button" class="route-quick-btn" id="btn-route-to-nearby">📍 現在地近く</button>
+            </div>
           </div>
 
           <!-- 日時・オプション -->
@@ -130,6 +138,16 @@
         <div id="stop-search-results" class="autocomplete-dropdown" role="listbox"></div>
       </div>
 
+      <!-- クイックアクセス -->
+      <div class="quick-access-container">
+        <button id="btn-matsue-station" class="quick-btn">
+          <span class="quick-btn-icon">🚉</span>松江駅
+        </button>
+        <button id="btn-nearby-stops" class="quick-btn">
+          <span class="quick-btn-icon">📍</span>現在地から探す
+        </button>
+      </div>
+
 
       <!-- 発車時刻表示エリア -->
       <div id="departures-container"></div>
@@ -151,6 +169,6 @@
 
   <!-- 事前パース済みGTFSデータ & アプリメインロジック -->
   <script src="gtfs_data.js"></script>
-  <script src="app.js?v=20260627-0855"></script>
+  <script src="app.js?v=20260627-1550"></script>
 </body>
 </html>

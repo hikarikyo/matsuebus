@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  console.log('松江・出雲バスナビ v20260627-0855 Loaded');
+  console.log('松江・出雲バスナビ v20260627-1550 Loaded');
 
   // ===== 定数とストレージキー =====
   const STORAGE_KEY_THEME = 'matsue-local-bus-theme';
@@ -29,12 +29,29 @@
   let stopTimesByStopId = {};   // { stop_id: [stop_time_record] }
   let stopTimesByTripId = {};   // { trip_id: [stop_time_record] } (stop_sequence順にソート済み)
   let stopNameById = {};        // { stop_id: stop_name } (逆引きマップ)
+  let timetableAutocomplete = null; // 時刻表検索オートコンプリート参照
+  let stopLatLngById = {};          // { stop_id: { lat, lon } } (緯度経度逆引き)
 
   // ===== 各要素取得 =====
   const $ = selector => document.querySelector(selector);
   const $$ = selector => document.querySelectorAll(selector);
 
   // ===== ユーティリティ関数 =====
+
+  /**
+   * 2地点間の距離 (メートル) をハバーシン公式で計算する
+   */
+  function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // 地球の半径 (m)
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
 
   /**
    * 秒数を HH:MM 形式の時刻文字列に変換
@@ -127,7 +144,13 @@
   /**
    * GTFSの路線名データを簡潔・綺麗に整形する
    */
-  function getDisplayRouteName(trip, route) {
+  /**
+   * GTFSの路線名データを簡潔・綺麗に整形する
+   * @param {object} trip - trips辞書の値（trip_idフィールドは含まない）
+   * @param {object} route - routes辞書の値
+   * @param {string} tripId - trips辞書のキー（= GTFS上のtrip_id）
+   */
+  function getDisplayRouteName(trip, route, tripId) {
     if (!route) return '路線バス';
     let shortName = route.route_short_name || '';
     const longName = route.route_long_name || '';
@@ -140,29 +163,31 @@
       routeTitle = longName;
     }
     
-    // 一畑バスの特別補正（データ構造不整合対応）
+    // 一畑バスの特別補正（GTFSデータの不整合対応）
+    // route_long_nameが「【玉造】」になっているが実際には八雲線の便も含む
     if (route.agency_id === '7280001000972') {
       if (longName.includes('【玉造】')) {
-        const tripStopTimes = stopTimesByTripId[trip.trip_id] || [];
-        console.log(`[31 Debug] Trip: ${trip.trip_id}, Times count: ${tripStopTimes.length}`);
+        // trip_idを使って停車順序を取得（tripオブジェクト自体にはtripIdが含まれない）
+        const tripStopTimes = stopTimesByTripId[tripId] || [];
         if (tripStopTimes.length > 0) {
-          const startStopId = tripStopTimes[0].stop_id;
-          const startStopName = stopNameById[startStopId] || '';
-          const lastStopId = tripStopTimes[tripStopTimes.length - 1].stop_id;
-          const lastStopName = stopNameById[lastStopId] || '';
-          console.log(`[31 Debug] Start stop: ${startStopName}, End stop: ${lastStopName}`);
+          const startStopName = stopNameById[tripStopTimes[0].stop_id] || '';
+          const lastStopName = stopNameById[tripStopTimes[tripStopTimes.length - 1].stop_id] || '';
           
           if (startStopName.includes('八雲') || lastStopName.includes('八雲')) {
+            // 八雲発着は系統番号31を表示
             routeTitle = '八雲';
-            shortName = '31'; // 八雲線は系統番号31を正しく表示
-            console.log(`[31 Debug] -> Corrected to [31] 八雲`);
+            shortName = '31';
           } else {
+            // 玉造線には系統番号が存在しない（公式ルール）
             routeTitle = '玉造';
-            shortName = ''; // 玉造線には系統番号がないため、系統番号を表示しない
-            console.log(`[31 Debug] -> Corrected to 玉造`);
+            shortName = '';
           }
-        } else {
-          console.log(`[31 Debug] -> No stop times found! default to: [${shortName}] ${routeTitle}`);
+        }
+        // stop_timesが空の場合はフォールバックとして系統番号を消す
+        // （安全側に倒し、玉造として表示）
+        if ((stopTimesByTripId[tripId] || []).length === 0) {
+          shortName = '';
+          routeTitle = '玉造';
         }
       }
     }
@@ -265,6 +290,36 @@
    * 解析後のCSV配列からインデックスとグループを構築
    */
   function buildIndex() {
+    // 0. 停留所名のクレンジングと表記統一（空のカッコや表記ゆれを防ぐ）
+    const repNames = {};
+    gtfsData.stops.forEach(s => {
+      const rawName = s.stop_name || '';
+      const baseName = rawName.replace(/\(.*?\)$/, '').replace(/（.*?）$/, '').trim();
+      if (!baseName) return;
+
+      const currentRep = repNames[baseName];
+      const hasValidKanaInParen = /\(.+?\)$/.test(rawName) || /（.+?）$/.test(rawName);
+
+      if (!currentRep) {
+        repNames[baseName] = rawName;
+      } else {
+        const isCurrentValid = /\(.+?\)$/.test(currentRep) || /（.+?）$/.test(currentRep);
+        if (hasValidKanaInParen && !isCurrentValid) {
+          repNames[baseName] = rawName;
+        } else if (rawName.length > currentRep.length && !rawName.includes('()') && !rawName.includes('（）')) {
+          repNames[baseName] = rawName;
+        }
+      }
+    });
+
+    gtfsData.stops.forEach(s => {
+      const rawName = s.stop_name || '';
+      const baseName = rawName.replace(/\(.*?\)$/, '').replace(/（.*?）$/, '').trim();
+      if (repNames[baseName]) {
+        s.stop_name = repNames[baseName];
+      }
+    });
+
     // 1. stops のグループ化
     const stopsByName = {};
     gtfsData.stops.forEach(s => {
@@ -299,10 +354,12 @@
 
     stopIndex.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 
-    // 逆引き用の停留所名マップの構築
+    // 逆引き用の停留所名マップおよび緯度経度マップの構築
     stopNameById = {};
+    stopLatLngById = {};
     gtfsData.stops.forEach(s => {
       stopNameById[s.stop_id] = s.stop_name;
+      stopLatLngById[s.stop_id] = { lat: parseFloat(s.stop_lat), lon: parseFloat(s.stop_lon) };
     });
 
     // 2. stop_times を stop_id ごと、および trip_id ごとにグループ化
@@ -357,10 +414,9 @@
     return activeServices;
   }
 
-  // ===== 時刻表タブのロジック =====
-
   /**
    * バス停の全標柱の今後の発車時刻を取得
+   * 各発車便に headsign（行先）情報を付与して返す
    */
   function getDeparturesForStopGroup(stopGroup, dateStr, timeStr) {
     const activeServices = getActiveServicesForDate(dateStr);
@@ -384,8 +440,20 @@
         if (st.departure_secs < targetSecs) return;
 
         const route = gtfsData.routes[trip.route_id];
-        const routeName = getDisplayRouteName(trip, route);
+        // st.trip_id を第3引数として渡す（tripオブジェクト自体にはtrip_idフィールドがない）
+        const routeName = getDisplayRouteName(trip, route, st.trip_id);
         const agencyName = route ? (gtfsData.agency[route.agency_id] || '路線バス') : '路線バス';
+
+        // このバス停がトリップの全停車数の中で何番目にあるかを計算して方向を判定
+        const allStopTimes = stopTimesByTripId[st.trip_id] || [];
+        const totalStops = allStopTimes.length;
+        const thisSeq = parseInt(st.stop_sequence, 10);
+        // 終着停留所名を行先グループキーとして使用
+        // カッコ内のヨミガナ（例: 「八雲車庫(やくもしゃこ)」→「八雲車庫」）を除去して統一する
+        const rawLastName = totalStops > 0
+          ? (stopNameById[allStopTimes[allStopTimes.length - 1].stop_id] || '')
+          : '';
+        const lastStopName = rawLastName.replace(/\(.*?\)$/, '').trim();
 
         departures.push({
           departure_secs: st.departure_secs,
@@ -393,7 +461,9 @@
           trip_headsign: trip.trip_headsign || '循環・その他',
           routeName: routeName,
           agencyName: agencyName,
-          trip_id: st.trip_id
+          trip_id: st.trip_id,
+          // 終着停留所名（方向グループキー）
+          destStopName: lastStopName
         });
       });
     });
@@ -402,9 +472,39 @@
     return departures;
   }
 
+  /**
+   * コンパクト発車行（dep-row）のHTMLを生成する
+   * @param {object} dep - getDeparturesForStopGroupの1件
+   * @param {string} idsAttr - JSON.stringify(stopGroup.ids)
+   */
+  function buildDepRowHtml(dep, idsAttr) {
+    const remaining = formatRemaining(dep.departure_secs);
+    const isIchibata = dep.agencyName.includes('一畑');
+    const barColor = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
+    const badgeBg  = isIchibata ? 'var(--ichibata-subtle)' : 'var(--shiei-subtle)';
+    const badgeCol = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
+    const companyLabel = isIchibata ? '一畑' : '市営';
+
+    return `
+      <div class="dep-row" data-trip-id="${escapeHtml(dep.trip_id)}" data-current-ids='${idsAttr}'>
+        <div class="dep-row-time">
+          ${dep.departure_time.substring(0, 5)}
+          ${remaining ? `<div class="dep-row-soon">${remaining}</div>` : ''}
+        </div>
+        <div class="dep-row-bar" style="background:${barColor}"></div>
+        <div class="dep-row-info">
+          <div class="dep-row-route">${escapeHtml(dep.routeName)}</div>
+          <div class="dep-row-headsign">→ ${escapeHtml(dep.trip_headsign)}</div>
+        </div>
+        <span class="dep-row-badge" style="background:${badgeBg}; color:${badgeCol}">${companyLabel}</span>
+      </div>`;
+  }
+
+  /**
+   * 時刻表タブ: バス停選択時に方向別のアコーディオンを描画する
+   */
   function handleStopSelected(stopGroup) {
     const container = $('#departures-container');
-
     const dateStr = todayYYYYMMDD();
     const deps = getDeparturesForStopGroup(stopGroup, dateStr, null);
 
@@ -425,53 +525,76 @@
       return;
     }
 
-    const depsHtml = deps.slice(0, 40).map((dep, i) => {
-      const remaining = formatRemaining(dep.departure_secs);
-      const isIchibata = dep.agencyName.includes('一畑');
-      const badgeColor = isIchibata ? 'var(--ichibata-subtle)' : 'var(--shiei-subtle)';
-      const badgeTextColor = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
-      const companyLogo = isIchibata ? '🔴一畑' : '🔵市営';
+    // 行先（終着停留所）別にグループ化
+    const groups = new Map(); // destKey -> [dep, ...]
+    deps.forEach(dep => {
+      const key = dep.destStopName || dep.trip_headsign;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(dep);
+    });
 
-      const idsAttr = JSON.stringify(stopGroup.ids);
+    // 各グループの最初の便（次の1本）の departure_secs で昇順ソート
+    const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+      const aFirst = a[1][0].departure_secs;
+      const bFirst = b[1][0].departure_secs;
+      return aFirst - bFirst;
+    });
 
-      return `
-        <div class="departure-card fade-in stagger-${Math.min(i + 1, 5)}" data-trip-id="${escapeHtml(dep.trip_id)}" data-current-ids='${idsAttr}'>
-          <div class="departure-card-main">
-            <div class="departure-time">
-              ${dep.departure_time.substring(0, 5)}
-              ${remaining ? `<div class="departure-time-remaining">${remaining}</div>` : ''}
+    const idsAttr = JSON.stringify(stopGroup.ids);
+
+    let groupsHtml = '';
+    sortedGroups.forEach(([destName, arr]) => {
+      const nextDep = arr[0];
+      const remaining = formatRemaining(nextDep.departure_secs);
+      const isIchibata = nextDep.agencyName.includes('一畑');
+      const companyLabel = isIchibata ? '一畑' : '市営';
+      const badgeBg = isIchibata ? 'var(--ichibata-subtle)' : 'var(--shiei-subtle)';
+      const badgeCol = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
+
+      // 全ての便（1本目含む）をアコーディオンのボディに配置
+      const depRowsHtml = arr.map(dep => buildDepRowHtml(dep, idsAttr)).join('');
+
+      groupsHtml += `
+        <div class="dir-group">
+          <div class="dir-header">
+            <div class="dir-header-summary">
+              <div class="dir-dest">→ ${escapeHtml(destName)}</div>
+              <div class="dir-next-info">
+                <span class="dir-next-time">${nextDep.departure_time.substring(0, 5)}</span>
+                <span class="dir-next-route">${escapeHtml(nextDep.routeName)}</span>
+                ${remaining ? `<span class="dir-next-remaining">${remaining}</span>` : ''}
+                <span class="dir-next-company" style="background:${badgeBg}; color:${badgeCol}">${companyLabel}</span>
+              </div>
             </div>
-            <div class="route-color-bar" style="background:${isIchibata ? 'var(--ichibata)' : 'var(--shiei)'}"></div>
-            <div class="departure-info">
-              <div class="departure-route">
-                ${escapeHtml(dep.routeName)}
-              </div>
-              <div class="departure-headsign">
-                <span class="departure-mode-badge" style="background:${badgeColor}; color:${badgeTextColor}; font-size:11px; padding:2px 6px; border-radius:4px;">
-                  ${companyLogo}
-                </span>
-                <span>→ ${escapeHtml(dep.trip_headsign)}</span>
-              </div>
+            <div class="dir-arrow-area">
+              <span class="dir-count-badge">${arr.length}本</span>
+              <span class="dir-arrow">▼</span>
+            </div>
+          </div>
+          <div class="dir-body" style="display: none;">
+            <div class="dep-list">
+              ${depRowsHtml}
             </div>
           </div>
         </div>`;
-    }).join('');
+    });
 
     container.innerHTML = `
       <div class="glass-card fade-in">
         <div class="departures-header">
           <div>
             <div class="departures-station-name">${escapeHtml(stopGroup.name)}</div>
-            <div class="departures-date">本日これからの発車予定 (最大40件・タップで途中駅表示)</div>
+            <div class="departures-date">本日これからの発車（方向をタップで全便展開）</div>
           </div>
         </div>
-        <div class="departures-list">
-          ${depsHtml}
+        <div class="dir-groups-container">
+          ${groupsHtml}
         </div>
       </div>`;
   }
 
   // ===== 経路検索タブのロジック =====
+
 
   /**
    * 直通バスの経路を検索
@@ -518,7 +641,8 @@
           if (searchType === 'arrival' && stTo.departure_secs > targetSecs) return;
 
           const route = gtfsData.routes[trip.route_id];
-          const routeName = getDisplayRouteName(trip, route);
+          // tripId（辞書のキー）を第3引数として渡す（tripオブジェクト自体にはtrip_idフィールドがない）
+          const routeName = getDisplayRouteName(trip, route, tripId);
           const agencyName = route ? (gtfsData.agency[route.agency_id] || '路線バス') : '路線バス';
           const durationSecs = stTo.departure_secs - stFrom.departure_secs;
 
@@ -735,12 +859,116 @@
   }
 
   function initTabsAndInputs() {
-    const timetableAC = initAutocomplete({
+    timetableAutocomplete = initAutocomplete({
       input: $('#stop-search-input'),
       dropdown: $('#stop-search-results'),
       clearBtn: $('#stop-search-clear'),
       onSelect: handleStopSelected
     });
+
+    // クイックアクセス: 松江駅
+    const btnMatsue = $('#btn-matsue-station');
+    if (btnMatsue) {
+      btnMatsue.addEventListener('click', () => {
+        const matsueStop = stopIndex.find(s => s.name === '松江駅');
+        if (matsueStop) {
+          timetableAutocomplete.setQuery(matsueStop.name);
+        }
+      });
+    }
+
+    // クイックアクセス: 現在地から探す
+    const btnNearby = $('#btn-nearby-stops');
+    const departuresContainer = $('#departures-container');
+    if (btnNearby) {
+      btnNearby.addEventListener('click', () => {
+        if (!navigator.geolocation) {
+          showNearbyError('お使いのブラウザは位置情報サービスに対応していません。');
+          return;
+        }
+
+        // ローディング表示
+        departuresContainer.innerHTML = `
+          <div class="glass-card fade-in">
+            <div class="nearby-loading">
+              <div class="nearby-loading-spinner"></div>
+              <div class="loading-text" style="font-size:14px; color:var(--text-secondary);">現在地を取得しています...</div>
+            </div>
+          </div>`;
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            // 近くのバス停を検索 (緯度経度が設定されているもの)
+            const scored = stopIndex
+              .filter(s => s.lat != null && s.lon != null)
+              .map(s => {
+                const dist = getDistance(lat, lon, s.lat, s.lon);
+                return { stopGroup: s, distance: dist };
+              });
+
+            scored.sort((a, b) => a.distance - b.distance);
+            const nearby = scored.slice(0, 5);
+
+            if (nearby.length === 0) {
+              showNearbyError('近くにバス停が見つかりませんでした。');
+              return;
+            }
+
+            // HTML生成
+            const rowsHtml = nearby.map(item => {
+              const distStr = item.distance < 1000
+                ? `${Math.round(item.distance)}m`
+                : `${(item.distance / 1000).toFixed(1)}km`;
+
+              return `
+                <div class="nearby-stop-row" data-stop-name="${escapeHtml(item.stopGroup.name)}">
+                  <div class="nearby-stop-name">🚌 ${escapeHtml(item.stopGroup.name)}</div>
+                  <div class="nearby-stop-dist">${distStr}</div>
+                </div>`;
+            }).join('');
+
+            departuresContainer.innerHTML = `
+              <div class="glass-card fade-in">
+                <div class="departures-header">
+                  <div>
+                    <div class="departures-station-name">📍 現在地周辺のバス停</div>
+                    <div class="departures-date">タップすると時刻表を表示します</div>
+                  </div>
+                </div>
+                <div class="nearby-stops-list">
+                  ${rowsHtml}
+                </div>
+              </div>`;
+          },
+          (error) => {
+            console.error(error);
+            let errMsg = '位置情報の取得に失敗しました。';
+            if (error.code === 1) {
+              errMsg = '位置情報の利用が許可されていません。ブラウザの設定を確認してください。';
+            } else if (error.code === 2) {
+              errMsg = '位置情報を特定できませんでした。';
+            } else if (error.code === 3) {
+              errMsg = '位置情報の取得がタイムアウトしました。';
+            }
+            showNearbyError(errMsg);
+          },
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        );
+      });
+    }
+
+    function showNearbyError(message) {
+      departuresContainer.innerHTML = `
+        <div class="glass-card fade-in">
+          <div class="nearby-error">
+            <span class="nearby-error-icon">⚠️</span>
+            <div class="nearby-error-text">${escapeHtml(message)}</div>
+          </div>
+        </div>`;
+    }
 
 
     const routeFromAC = initAutocomplete({
@@ -754,6 +982,86 @@
       dropdown: $('#route-to-results'),
       onSelect: () => {}
     });
+
+    // 経路検索クイックボタン: 出発地・目的地「松江駅」
+    const btnRouteFromMatsue = $('#btn-route-from-matsue');
+    if (btnRouteFromMatsue) {
+      btnRouteFromMatsue.addEventListener('click', () => {
+        const matsueStop = stopIndex.find(s => s.name === '松江駅');
+        if (matsueStop && routeFromAC) {
+          routeFromAC.setQuery(matsueStop.name);
+        }
+      });
+    }
+
+    const btnRouteToMatsue = $('#btn-route-to-matsue');
+    if (btnRouteToMatsue) {
+      btnRouteToMatsue.addEventListener('click', () => {
+        const matsueStop = stopIndex.find(s => s.name === '松江駅');
+        if (matsueStop && routeToAC) {
+          routeToAC.setQuery(matsueStop.name);
+        }
+      });
+    }
+
+    // 経路検索クイックボタン: 出発地・目的地「現在地近く」
+    const handleRouteNearby = (acInstance, inputElement) => {
+      if (!navigator.geolocation) {
+        alert('お使いのブラウザは位置情報サービスに対応していません。');
+        return;
+      }
+
+      const originalPlaceholder = inputElement.placeholder;
+      inputElement.placeholder = '現在地を取得中...';
+      inputElement.value = '';
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          inputElement.placeholder = originalPlaceholder;
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          // 最も近い停留所を1件取得
+          let nearest = null;
+          let minDist = Infinity;
+          stopIndex.forEach(s => {
+            if (s.lat != null && s.lon != null) {
+              const dist = getDistance(lat, lon, s.lat, s.lon);
+              if (dist < minDist) {
+                minDist = dist;
+                nearest = s;
+              }
+            }
+          });
+
+          if (nearest && acInstance) {
+            acInstance.setQuery(nearest.name);
+          } else {
+            alert('近くにバス停が見つかりませんでした。');
+          }
+        },
+        (error) => {
+          console.error(error);
+          inputElement.placeholder = originalPlaceholder;
+          alert('位置情報の取得に失敗しました。GPSまたはブラウザの設定を確認してください。');
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    };
+
+    const btnRouteFromNearby = $('#btn-route-from-nearby');
+    if (btnRouteFromNearby) {
+      btnRouteFromNearby.addEventListener('click', () => {
+        handleRouteNearby(routeFromAC, $('#route-from-input'));
+      });
+    }
+
+    const btnRouteToNearby = $('#btn-route-to-nearby');
+    if (btnRouteToNearby) {
+      btnRouteToNearby.addEventListener('click', () => {
+        handleRouteNearby(routeToAC, $('#route-to-input'));
+      });
+    }
 
     $('#route-swap-btn').addEventListener('click', () => {
       const fromVal = $('#route-from-input').value;
@@ -779,15 +1087,83 @@
       });
     });
 
-    // 時刻表カードタップ時の途中停留所タイムライン表示
+    // 時刻表・経路検索の行/カードタップ時の途中停留所タイムライン表示
     document.addEventListener('click', (e) => {
-      const card = e.target.closest('.departure-card');
-      if (!card) return;
-
       // リンクがタップされた場合はトグルしない
-      if (e.target.closest('a')) {
+      if (e.target.closest('a')) return;
+      // チップクリックも無視
+      if (e.target.closest('.dir-chip')) return;
+
+      // 現在地検索結果の行がタップされた時の処理
+      const nearbyRow = e.target.closest('.nearby-stop-row');
+      if (nearbyRow) {
+        const stopName = nearbyRow.dataset.stopName;
+        if (stopName && timetableAutocomplete) {
+          timetableAutocomplete.setQuery(stopName);
+        }
         return;
       }
+
+      // 方面アコーディオン（dir-header）の処理
+      const dirHeader = e.target.closest('.dir-header');
+      if (dirHeader) {
+        const group = dirHeader.closest('.dir-group');
+        if (group) {
+          const body = group.querySelector('.dir-body');
+          if (body) {
+            const isHidden = body.style.display === 'none';
+            body.style.display = isHidden ? 'block' : 'none';
+            group.classList.toggle('expanded', isHidden);
+          }
+        }
+        return;
+      }
+
+      // dep-row（時刻表タブの行スタイル）の処理
+      const row = e.target.closest('.dep-row');
+      if (row) {
+        // 既に展開中なら閉じる
+        const existingDetails = row.nextElementSibling;
+        if (existingDetails && existingDetails.classList.contains('dep-row-details')) {
+          existingDetails.remove();
+          row.classList.remove('expanded');
+          return;
+        }
+
+        const tripId = row.dataset.tripId;
+        if (!tripId) return;
+        let currentIds = [];
+        try { currentIds = JSON.parse(row.dataset.currentIds || '[]'); } catch {}
+
+        const stopTimes = stopTimesByTripId[tripId] || [];
+        const timelineHtml = stopTimes.map(st => {
+          const name = stopNameById[st.stop_id] || '不明';
+          const isCurrent = currentIds.includes(st.stop_id);
+          return `
+            <div class="timeline-stop ${isCurrent ? 'current' : ''}">
+              <div class="timeline-time">${st.departure_time.substring(0, 5)}</div>
+              <div class="timeline-node"></div>
+              <div class="timeline-name">${escapeHtml(name)}</div>
+            </div>`;
+        }).join('');
+
+        const detailsDiv = document.createElement('div');
+        detailsDiv.className = 'dep-row-details fade-in';
+        detailsDiv.innerHTML = `
+          <div class="timeline-container">
+            <div class="timeline-line"></div>
+            ${timelineHtml}
+          </div>`;
+
+        // dep-row の直後に挿入
+        row.classList.add('expanded');
+        row.insertAdjacentElement('afterend', detailsDiv);
+        return;
+      }
+
+      // departure-card（経路検索タブのカードスタイル）の処理
+      const card = e.target.closest('.departure-card');
+      if (!card) return;
 
       const details = card.querySelector('.trip-details');
       if (details) {
@@ -798,25 +1174,19 @@
 
       const tripId = card.dataset.tripId;
       if (!tripId) return;
-
       let currentIds = [];
-      try {
-        currentIds = JSON.parse(card.dataset.currentIds || '[]');
-      } catch {}
+      try { currentIds = JSON.parse(card.dataset.currentIds || '[]'); } catch {}
 
       const detailsDiv = document.createElement('div');
       detailsDiv.className = 'trip-details fade-in';
 
       const stopTimes = stopTimesByTripId[tripId] || [];
-
       const timelineHtml = stopTimes.map(st => {
         const name = stopNameById[st.stop_id] || '不明';
-        const time = st.departure_time.substring(0, 5);
         const isCurrent = currentIds.includes(st.stop_id);
-
         return `
           <div class="timeline-stop ${isCurrent ? 'current' : ''}">
-            <div class="timeline-time">${time}</div>
+            <div class="timeline-time">${st.departure_time.substring(0, 5)}</div>
             <div class="timeline-node"></div>
             <div class="timeline-name">${escapeHtml(name)}</div>
           </div>`;

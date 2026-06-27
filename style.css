@@ -571,7 +571,7 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -583,14 +583,230 @@ body::after {
 .departures-date {
   font-size: 12px;
   color: var(--text-muted);
+  margin-top: 2px;
 }
 
-
-
-.departures-list {
-  padding: 8px;
+/* --- 方面別アコーディオンUI --- */
+.dir-groups-container {
+  display: flex;
+  flex-direction: column;
 }
 
+.dir-group {
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+}
+
+.dir-group:last-child {
+  border-bottom: none;
+}
+
+.dir-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  background: var(--bg-glass);
+  transition: background 0.15s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dir-header:hover {
+  background: var(--bg-glass-hover);
+}
+
+.dir-header-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dir-dest {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dir-next-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dir-next-time {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.dir-next-route {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-glass-hover);
+  padding: 1px 6px;
+  border-radius: 4px;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dir-next-remaining {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+.dir-next-company {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.dir-arrow-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+.dir-count-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(0,0,0,0.05);
+  padding: 2px 6px;
+  border-radius: 12px;
+}
+
+[data-theme="dark"] .dir-count-badge {
+  background: rgba(255,255,255,0.08);
+}
+
+.dir-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.dir-group.expanded .dir-arrow {
+  transform: rotate(180deg);
+}
+
+.dir-body {
+  background: rgba(0, 0, 0, 0.02);
+  border-top: 1px solid var(--border-subtle, rgba(0,0,0,0.05));
+}
+
+[data-theme="dark"] .dir-body {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+/* --- コンパクト発車行リスト --- */
+.dep-list {
+  padding: 4px 0;
+}
+
+.dep-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+  cursor: pointer;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dep-row:last-child {
+  border-bottom: none;
+}
+
+.dep-row:hover {
+  background: var(--bg-glass-hover);
+}
+
+.dep-row.expanded {
+  background: var(--bg-glass-hover);
+}
+
+/* 時刻 */
+.dep-row-time {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+  color: var(--text-primary);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.dep-row-soon {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--teal);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* 会社カラーバー */
+.dep-row-bar {
+  width: 3px;
+  height: 32px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* 路線・行先 */
+.dep-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.dep-row-route {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dep-row-headsign {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 会社バッジ */
+.dep-row-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* アコーディオン（途中停留所） */
+.dep-row-details {
+  padding: 8px 16px 12px calc(16px + 52px + 10px + 3px + 10px);
+  background: var(--bg-glass-hover);
+}
+
+/* 後方互換: 既存の departure-card クラスは dep-row にリダイレクト（経路検索で使用） */
 .departure-card {
   display: flex;
   flex-direction: column;
@@ -1293,6 +1509,155 @@ body::after {
 
 .timeline-name {
   flex-grow: 1;
+}
+
+/* --- クイックアクセスボタン (松江駅 / 現在地) --- */
+.quick-access-container {
+  display: flex;
+  gap: 10px;
+  margin: 12px 16px 4px 16px;
+}
+
+.quick-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 12px);
+  border: 1.5px solid var(--border);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.quick-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.quick-btn-icon {
+  font-size: 14px;
+}
+
+/* 現在地検索時の結果カード */
+.nearby-stops-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.nearby-stop-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.nearby-stop-row:last-child {
+  border-bottom: none;
+}
+
+.nearby-stop-row:hover {
+  background: var(--bg-glass-hover);
+}
+
+.nearby-stop-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.nearby-stop-dist {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--teal);
+  background: var(--bg-glass-hover);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.nearby-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  gap: 12px;
+}
+
+.nearby-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.nearby-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  gap: 8px;
+  text-align: center;
+  color: var(--red, #ff4d4d);
+}
+
+.nearby-error-icon {
+  font-size: 24px;
+}
+
+.nearby-error-text {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* 経路検索のクイック入力ボタン */
+.route-quick-inputs {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  padding-left: 2px;
+}
+
+.route-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-glass-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.route-quick-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.route-quick-btn:active {
+  transform: scale(0.97);
 }
 
 
