@@ -7,11 +7,74 @@
 (() => {
   'use strict';
 
-  console.log('松江・出雲バスナビ v20260627-1550 Loaded');
+  console.log('松江・出雲バスナビ v20260627-1600 Loaded');
 
   // ===== 定数とストレージキー =====
   const STORAGE_KEY_THEME = 'matsue-local-bus-theme';
+  const STORAGE_KEY_HISTORY = 'matsue-bus-history';
+  const STORAGE_KEY_FAV_STOPS = 'matsue-bus-fav-stops';
+  const STORAGE_KEY_FAV_ROUTES = 'matsue-bus-fav-routes';
   const DEBOUNCE_MS = 200;
+
+  // ===== 状態管理 (localStorage) =====
+  const SearchHistoryManager = {
+    get() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY_HISTORY) || '[]'); }
+      catch { return []; }
+    },
+    add(stopName) {
+      if (!stopName) return;
+      let history = this.get();
+      history = history.filter(name => name !== stopName);
+      history.unshift(stopName);
+      if (history.length > 10) history = history.slice(0, 10);
+      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
+    }
+  };
+
+  const FavoritesManager = {
+    getStops() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY_FAV_STOPS) || '[]'); }
+      catch { return []; }
+    },
+    toggleStop(stopName) {
+      if (!stopName) return false;
+      let favs = this.getStops();
+      const isFav = favs.includes(stopName);
+      if (isFav) {
+        favs = favs.filter(name => name !== stopName);
+      } else {
+        favs.push(stopName);
+      }
+      localStorage.setItem(STORAGE_KEY_FAV_STOPS, JSON.stringify(favs));
+      return !isFav;
+    },
+    isFavStop(stopName) {
+      return this.getStops().includes(stopName);
+    },
+
+    getRoutes() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY_FAV_ROUTES) || '[]'); }
+      catch { return []; }
+    },
+    toggleRoute(fromName, toName) {
+      if (!fromName || !toName) return false;
+      let favs = this.getRoutes();
+      const idx = favs.findIndex(r => r.from === fromName && r.to === toName);
+      if (idx !== -1) {
+        favs.splice(idx, 1);
+        localStorage.setItem(STORAGE_KEY_FAV_ROUTES, JSON.stringify(favs));
+        return false;
+      } else {
+        favs.push({ from: fromName, to: toName });
+        localStorage.setItem(STORAGE_KEY_FAV_ROUTES, JSON.stringify(favs));
+        return true;
+      }
+    },
+    isFavRoute(fromName, toName) {
+      return this.getRoutes().some(r => r.from === fromName && r.to === toName);
+    }
+  };
 
   // ===== GTFSデータ格納エリア =====
   const gtfsData = {
@@ -201,7 +264,7 @@
     if (!input || !dropdown) return null; // DOMが取得できない場合の安全ガード
     let query = '';
 
-    const renderDropdown = (items) => {
+    const renderDropdown = (items, isHistory = false) => {
       if (items.length === 0) {
         dropdown.innerHTML = '';
         dropdown.classList.remove('visible');
@@ -210,10 +273,11 @@
 
       dropdown.innerHTML = items.map(item => `
         <div class="autocomplete-item" role="option" data-name="${escapeHtml(item.name)}">
-          <span class="autocomplete-item-icon">🚌</span>
+          <span class="autocomplete-item-icon">${isHistory ? '🕒' : '🚌'}</span>
           <div class="autocomplete-item-info">
             <div class="autocomplete-item-name">${escapeHtml(item.name)}</div>
-            ${item.kana ? `<div class="autocomplete-item-sub">${escapeHtml(item.kana)}</div>` : ''}
+            ${item.kana && !isHistory ? `<div class="autocomplete-item-sub">${escapeHtml(item.kana)}</div>` : ''}
+            ${isHistory ? `<div class="autocomplete-item-sub" style="color:var(--text-muted); font-size:10px;">検索履歴</div>` : ''}
           </div>
         </div>
       `).join('');
@@ -223,8 +287,15 @@
     const performSearch = () => {
       const val = input.value.trim().toLowerCase();
       if (!val) {
-        renderDropdown([]);
         if (clearBtn) clearBtn.classList.remove('visible');
+        const historyNames = SearchHistoryManager.get();
+        if (historyNames.length > 0) {
+          // 履歴名からダミーのitemオブジェクトを作成
+          const historyItems = historyNames.map(name => ({ name: name }));
+          renderDropdown(historyItems, true);
+        } else {
+          renderDropdown([]);
+        }
         return;
       }
 
@@ -236,7 +307,7 @@
         (stop.kana && stop.kana.includes(hiraganaVal))
       ).slice(0, 15);
 
-      renderDropdown(results);
+      renderDropdown(results, false);
     };
 
     const handleInput = debounce(performSearch, DEBOUNCE_MS);
@@ -261,7 +332,15 @@
       if (selectedStop) {
         input.value = selectedStop.name;
         renderDropdown([]);
+        SearchHistoryManager.add(selectedStop.name);
         onSelect(selectedStop);
+      } else {
+        // 履歴クリック時のフォールバック処理
+        input.value = stopName;
+        renderDropdown([]);
+        SearchHistoryManager.add(stopName);
+        // 仮のstopオブジェクトを渡す（検索ロジック側で名前で解決させるため）
+        onSelect({ name: stopName, ids: [] });
       }
     });
 
@@ -276,6 +355,7 @@
         input.value = text;
         const selectedStop = stopIndex.find(s => s.name === text);
         if (selectedStop) {
+          SearchHistoryManager.add(selectedStop.name);
           onSelect(selectedStop);
         } else {
           performSearch();
@@ -508,20 +588,26 @@
     const dateStr = todayYYYYMMDD();
     const deps = getDeparturesForStopGroup(stopGroup, dateStr, null);
 
+    const isFav = FavoritesManager.isFavStop(stopGroup.name);
+    const favIcon = isFav ? '★' : '☆';
+    const favClass = isFav ? 'fav-active' : '';
+
     if (deps.length === 0) {
       container.innerHTML = `
         <div class="glass-card fade-in">
-          <div class="departures-header">
+          <div class="departures-header" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="departures-station-name">${escapeHtml(stopGroup.name)}</div>
               <div class="departures-date">本日これからの運行予定はありません</div>
             </div>
+            <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
           </div>
           <div class="empty-state">
             <div class="empty-state-icon">🚌</div>
             <div class="empty-state-text">本日の発車予定はありません</div>
           </div>
         </div>`;
+      setupFavStopButton(container.querySelector('.fav-toggle-btn'));
       return;
     }
 
@@ -581,16 +667,31 @@
 
     container.innerHTML = `
       <div class="glass-card fade-in">
-        <div class="departures-header">
+        <div class="departures-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div class="departures-station-name">${escapeHtml(stopGroup.name)}</div>
             <div class="departures-date">本日これからの発車（方向をタップで全便展開）</div>
           </div>
+          <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
         </div>
         <div class="dir-groups-container">
           ${groupsHtml}
         </div>
       </div>`;
+
+    setupFavStopButton(container.querySelector('.fav-toggle-btn'));
+  }
+
+  function setupFavStopButton(btn) {
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const stopName = btn.dataset.stopName;
+      const isNowFav = FavoritesManager.toggleStop(stopName);
+      btn.textContent = isNowFav ? '★' : '☆';
+      btn.classList.toggle('fav-active', isNowFav);
+      renderFavStops();
+    });
   }
 
   // ===== 経路検索タブのロジック =====
@@ -775,8 +876,17 @@
         </div>`;
     }).join('');
 
+    const isFavRoute = FavoritesManager.isFavRoute(fromGroup.name, toGroup.name);
+    const favIcon = isFavRoute ? '★' : '☆';
+    const favClass = isFavRoute ? 'fav-active' : '';
+
     container.innerHTML = `
-      <div class="section-label">検索結果 (直通バス便のみ・最大${maxResults}件・タップで途中駅表示)</div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="section-label" style="margin-bottom:0;">検索結果 (最大${maxResults}件・タップで途中駅表示)</div>
+        <button class="fav-toggle-route-btn ${favClass}" data-from="${escapeHtml(fromGroup.name)}" data-to="${escapeHtml(toGroup.name)}" aria-label="経路をお気に入り登録">
+          ${favIcon} 経路を保存
+        </button>
+      </div>
       ${routesHtml}
       <div style="text-align:center; margin-top:16px;">
         <span style="font-size:12px; color:var(--text-muted);">乗り継ぎ経路を検索したい場合は：</span>
@@ -791,6 +901,85 @@
           </a>
         </div>
       </div>`;
+
+    const favBtn = container.querySelector('.fav-toggle-route-btn');
+    if (favBtn) {
+      favBtn.addEventListener('click', () => {
+        const fromName = favBtn.dataset.from;
+        const toName = favBtn.dataset.to;
+        const isNowFav = FavoritesManager.toggleRoute(fromName, toName);
+        favBtn.innerHTML = `${isNowFav ? '★' : '☆'} 経路を保存`;
+        favBtn.classList.toggle('fav-active', isNowFav);
+        renderFavRoutes();
+      });
+    }
+  }
+
+  // ===== お気に入り一覧の描画 =====
+  function renderFavStops() {
+    const container = $('#fav-stops-container');
+    if (!container) return;
+    const favs = FavoritesManager.getStops();
+    if (favs.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const btnsHtml = favs.map(name => `
+      <button class="fav-item-btn" data-name="${escapeHtml(name)}">
+        <span style="color:var(--accent);">★</span> ${escapeHtml(name)}
+      </button>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="section-label" style="margin-top:16px;">⭐ お気に入りバス停</div>
+      <div class="fav-list-container">
+        ${btnsHtml}
+      </div>
+    `;
+
+    container.querySelectorAll('.fav-item-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (timetableAutocomplete) {
+          timetableAutocomplete.setQuery(btn.dataset.name);
+        }
+      });
+    });
+  }
+
+  function renderFavRoutes() {
+    const container = $('#fav-routes-container');
+    if (!container) return;
+    const favs = FavoritesManager.getRoutes();
+    if (favs.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const btnsHtml = favs.map(r => `
+      <button class="fav-item-btn fav-route-btn" data-from="${escapeHtml(r.from)}" data-to="${escapeHtml(r.to)}">
+        <span style="color:var(--accent);">★</span> ${escapeHtml(r.from)} <span style="color:var(--text-muted);">→</span> ${escapeHtml(r.to)}
+      </button>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="section-label" style="margin-top:16px;">⭐ お気に入り経路</div>
+      <div class="fav-list-container">
+        ${btnsHtml}
+      </div>
+    `;
+
+    container.querySelectorAll('.fav-route-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const fromInput = $('#route-from-input');
+        const toInput = $('#route-to-input');
+        if (fromInput && toInput) {
+          fromInput.value = btn.dataset.from;
+          toInput.value = btn.dataset.to;
+          $('#route-search-btn').click();
+        }
+      });
+    });
   }
 
   // ===== タブ切り替え制御 =====
@@ -1202,6 +1391,8 @@
       card.classList.add('expanded');
     });
 
+    renderFavStops();
+    renderFavRoutes();
     loadGTFS();
   });
 
