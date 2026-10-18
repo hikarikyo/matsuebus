@@ -1,0 +1,37 @@
+name: Update GTFS Data
+
+on:
+  schedule:
+    # 毎月1日・15日・25日の早朝 (JST 06:00) に最新のオープンデータを確認
+    - cron: '0 21 1,14,24 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-gtfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js のセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 最新GTFSデータの取得・変換
+        run: node scripts/update-gtfs.js
+
+      - name: 変更がある場合はコミット＆プッシュ
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add gtfs_data.js index.html
+            git commit -m "chore(data): 最新GTFSオープンデータの自動反映"
+            git push
+          else
+            echo "GTFSデータに変更はありません。"
+          fi

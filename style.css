@@ -1722,4 +1722,285 @@ body::after {
   transform: translateY(0);
 }
 
+/* ===== GTFS有効期間外フォールバック警告バナー ===== */
+.feed-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-md);
+  background: var(--amber-subtle);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ===== 時刻表タブ：日付・表示モード切替バー ===== */
+.timetable-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 12px 0 8px;
+}
+
+.tt-mode-group {
+  display: inline-flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.tt-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.tt-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.tt-date-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 170px;
+  justify-content: flex-end;
+}
+
+.tt-date-input {
+  width: auto;
+  min-width: 135px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* ===== 運賃バッジ・のりば番号バッジ・公式バスロケリンク ===== */
+.fare-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--amber-subtle);
+  color: var(--amber);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.pole-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--teal-subtle);
+  color: var(--teal);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.busloc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.busloc-link:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ===== 1回乗り継ぎ検索結果カード ===== */
+.transfer-card {
+  margin-top: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.transfer-card:hover {
+  background: var(--bg-card-hover);
+  transform: translateY(-1px);
+}
+
+.transfer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.transfer-times {
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.transfer-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.transfer-leg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.transfer-leg-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 82px;
+}
+
+.transfer-wait-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 4px 12px;
+  padding: 3px 8px;
+  border-left: 2px dashed var(--amber);
+  font-size: 11px;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+/* ===== 途中停留所タイムライン操作ボタン ===== */
+.timeline-stop {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.timeline-stop-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.timeline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.85;
+}
+
+.timeline-action-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.timeline-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* ===== 共有ボタン・トースト通知 ===== */
+.header-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-url-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.share-url-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.toast-notification {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--bg-dropdown);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow-lg);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 10000;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.25s ease;
+  pointer-events: none;
+}
+
+.toast-notification.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+
 

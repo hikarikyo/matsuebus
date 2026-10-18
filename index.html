@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>松江・出雲バスナビ - 路線バス時刻検索</title>
   <meta name="description" content="松江市・出雲市の路線バス時刻表を簡単に検索。発車時刻表の確認や経路検索が可能です。" />
-  <link rel="stylesheet" href="style.css?v=2" />
+  <meta name="theme-color" content="#0a0e1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css?v=20261018" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚌</text></svg>" />
 </head>
 <body>
@@ -39,6 +43,9 @@
 
   <!-- メインコンテンツ -->
   <main class="main-content">
+
+    <!-- GTFS有効期間外などの案内バナー -->
+    <div id="feed-notice-banner"></div>
 
     <!-- ===== 経路検索タブ ===== -->
     <section id="route-tab" class="tab-pane active" aria-label="経路検索">
@@ -111,7 +118,7 @@
             <span>🔍</span>
             <span>経路を検索</span>
           </button>
-      </div>
+        </div>
       </div>
 
       <!-- お気に入り経路エリア -->
@@ -150,15 +157,29 @@
         </button>
       </div>
 
+      <!-- 時刻表の表示条件（日付・始発から全便切り替え） -->
+      <div class="timetable-filter-bar glass-card">
+        <div class="tt-mode-group" role="group" aria-label="表示時刻モード">
+          <button type="button" class="tt-mode-btn active" data-tt-mode="now">🕐 現在時刻以降</button>
+          <button type="button" class="tt-mode-btn" data-tt-mode="all">🌅 始発から全便</button>
+        </div>
+        <div class="tt-date-group">
+          <input type="date" id="timetable-date" class="route-option-input tt-date-input" aria-label="時刻表の日付" />
+          <button type="button" id="btn-timetable-today" class="route-quick-btn">今日</button>
+        </div>
+      </div>
+
       <!-- お気に入りバス停エリア -->
       <div id="fav-stops-container"></div>
-
 
       <!-- 発車時刻表示エリア -->
       <div id="departures-container"></div>
     </section>
 
   </main>
+
+  <!-- トースト通知 -->
+  <div id="toast-notification" class="toast-notification" aria-live="polite"></div>
 
   <!-- ローディング表示 -->
   <div id="loading-overlay" class="loading-overlay">
@@ -168,12 +189,12 @@
   </div>
 
   <footer class="footer">
-    <p>交通データは松江市交通局および一畑バスの標準的なバス情報フォーマット（GTFS-JP）に基づいています（2026年6月1日改正ダイヤに対応）。</p>
+    <p>交通データは松江市交通局および一畑バスの標準的なバス情報フォーマット（GTFS-JP）に基づいています（2026年10月1日改正ダイヤに対応）。</p>
     <p>データ提供: <a href="https://matsue-bus.jp/opendata" target="_blank" rel="noopener">松江市交通局オープンデータ</a></p>
   </footer>
 
   <!-- 事前パース済みGTFSデータ & アプリメインロジック -->
-  <script src="gtfs_data.js"></script>
-  <script src="app.js?v=20260627-1600"></script>
+  <script src="gtfs_data.js?v=20261001"></script>
+  <script src="app.js?v=20261018"></script>
 </body>
 </html>

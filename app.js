@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  console.log('松江・出雲バスナビ v20260627-1600 Loaded');
+  console.log('松江・出雲バスナビ v20261018 (GTFS 2026/10/01改正版) Loaded');
 
   // ===== 定数とストレージキー =====
   const STORAGE_KEY_THEME = 'matsue-local-bus-theme';
@@ -78,14 +78,26 @@
 
   // ===== GTFSデータ格納エリア =====
   const gtfsData = {
+    feed_info: {},    // { start_date, end_date, version }
     agency: {},       // { agency_id: agency_name }
-    stops: [],        // [{ stop_id, stop_name, stop_lat, stop_lon }]
-    routes: {},       // { route_id: { route_short_name, route_long_name, agency_id } }
+    stops: [],        // [{ stop_id, stop_name, stop_lat, stop_lon, stop_kana }]
+    routes: {},       // { route_id: { route_short_name, route_long_name, agency_id, route_url } }
     trips: {},        // { trip_id: { route_id, service_id, trip_headsign } }
     calendar: {},     // { service_id: { monday...sunday, start_date, end_date } }
     calendar_dates: {}, // { service_id: { YYYYMMDD: exception_type } }
+    fares: {},        // { "originBase>destBase": price }
     stop_times: []    // [{ trip_id, arrival_time, departure_time, stop_id, stop_sequence, departure_secs }]
   };
+
+  // 主要乗り継ぎ拠点リスト（直通便が無い/少ない場合の1回乗換探索用）
+  const MAJOR_TRANSFER_HUBS = [
+    '松江駅',
+    '県民会館前',
+    '大橋南詰',
+    '松江しんじ湖温泉駅',
+    'ＪＲ出雲市駅',
+    '玉造温泉入口'
+  ];
 
   // 検索・解析を高速化するためのインデックス
   let stopIndex = [];           // オートコンプリート検索用 [{ name, kana, ids, lat, lon }]
@@ -94,6 +106,9 @@
   let stopNameById = {};        // { stop_id: stop_name } (逆引きマップ)
   let timetableAutocomplete = null; // 時刻表検索オートコンプリート参照
   let stopLatLngById = {};          // { stop_id: { lat, lon } } (緯度経度逆引き)
+  let currentTimetableStopGroup = null; // 時刻表タブで現在選択中のバス停グループ
+  let timetableMode = 'now';        // 時刻表表示モード ('now' | 'all')
+  let toastTimer = null;            // トースト通知タイマー
 
   // ===== 各要素取得 =====
   const $ = selector => document.querySelector(selector);
@@ -466,7 +481,123 @@
   }
 
   /**
+   * 2つの標柱ID間の片道運賃（円）を取得する
+   */
+  function getFare(fromStopId, toStopId) {
+    if (!fromStopId || !toStopId || !gtfsData.fares) return null;
+    const fromBase = String(fromStopId).split('_')[0];
+    const toBase = String(toStopId).split('_')[0];
+    return gtfsData.fares[`${fromBase}>${toBase}`] || null;
+  }
+
+  /**
+   * stop_id から標柱番号（のりば番号）ラベルを取得する
+   */
+  function getPoleLabel(stopId) {
+    if (!stopId) return '';
+    const parts = String(stopId).split('_');
+    if (parts.length < 2 || !parts[1] || parts[1] === '0') return '';
+    return `${parts[1]}番のりば`;
+  }
+
+  /**
+   * stop_id から公式バスロケーションシステム（接近情報）のURLを生成する
+   */
+  function getStopBusLocUrl(stopId) {
+    if (!stopId) return 'https://mi.bus-navigation.jp/';
+    const [base, pole] = String(stopId).split('_');
+    if (!base || !pole) return 'https://mi.bus-navigation.jp/';
+    return `https://mi.bus-navigation.jp/wgsys/wgp/search.htm??stopcd=${base.padStart(6, '0')}&?poleNumber=${pole}`;
+  }
+
+  /**
+   * YYYYMMDD 文字列を見やすい「YYYY/MM/DD」形式に整形する
+   */
+  function formatDateSlash(dateStr) {
+    if (!dateStr || dateStr.length !== 8) return dateStr || '';
+    return `${dateStr.substring(0, 4)}/${dateStr.substring(4, 6)}/${dateStr.substring(6, 8)}`;
+  }
+
+  /**
+   * トースト通知を表示する
+   */
+  function showToast(message) {
+    const toast = $('#toast-notification');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('visible');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+    }, 2600);
+  }
+
+  /**
+   * 現在の検索状態をURLクエリパラメータに反映する（ディープリンク対応）
+   */
+  function syncUrlState(params) {
+    try {
+      const url = new URL(window.location.href);
+      url.search = '';
+      Object.entries(params).forEach(([k, v]) => {
+        if (v != null && v !== '') {
+          url.searchParams.set(k, v);
+        }
+      });
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      // file:// プロトコル等で replaceState が制限される環境では無視
+    }
+  }
+
+  /**
+   * 現在のURLをクリップボードにコピー（またはWeb Share APIで共有）する
+   */
+  async function copyShareUrl() {
+    const shareUrl = window.location.href;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('🔗 検索結果のURLをコピーしました');
+        return;
+      }
+    } catch {
+      // フォールバックへ進む
+    }
+    const tempInput = document.createElement('input');
+    tempInput.value = shareUrl;
+    document.body.appendChild(tempInput);
+    tempInput.select();
+    document.execCommand('copy');
+    document.body.removeChild(tempInput);
+    showToast('🔗 検索結果のURLをコピーしました');
+  }
+
+  /**
+   * GTFS有効期間外フォールバック時の警告バナー表示を更新する
+   */
+  function updateFeedNoticeBanner(dateStr, isFallback) {
+    const banner = $('#feed-notice-banner');
+    if (!banner) return;
+    if (!isFallback) {
+      banner.innerHTML = '';
+      return;
+    }
+    const startStr = formatDateSlash(gtfsData.feed_info && gtfsData.feed_info.start_date);
+    const endStr = formatDateSlash(gtfsData.feed_info && gtfsData.feed_info.end_date);
+    const rangeNote = (startStr && endStr) ? `（収録期間: ${startStr}〜${endStr}）` : '';
+    banner.innerHTML = `
+      <div class="feed-warning-banner fade-in">
+        <span>⚠️</span>
+        <div>
+          指定日（${escapeHtml(formatDateSlash(dateStr))}）はGTFSデータの有効期間外${escapeHtml(rangeNote)}のため、曜日ダイヤに基づく推定時刻を表示しています。
+        </div>
+      </div>`;
+  }
+
+  /**
    * 指定した日付で有効な service_id のセットを取得
+   * 有効期間外の日付が指定された場合は曜日判定にフォールバックし、警告バナーを表示する
    */
   function getActiveServicesForDate(dateStr) {
     const activeServices = new Set();
@@ -491,19 +622,32 @@
       }
     });
 
+    // 有効期間外のため該当サービスが0件だった場合、曜日のみでフォールバック適用
+    if (activeServices.size === 0) {
+      Object.entries(gtfsData.calendar).forEach(([serviceId, cal]) => {
+        if (cal[dayKey] === '1') {
+          activeServices.add(serviceId);
+        }
+      });
+      updateFeedNoticeBanner(dateStr, true);
+    } else {
+      updateFeedNoticeBanner(dateStr, false);
+    }
+
     return activeServices;
   }
 
   /**
    * バス停の全標柱の今後の発車時刻を取得
-   * 各発車便に headsign（行先）情報を付与して返す
+   * 各発車便に headsign（行先）・のりば番号・バスロケURL情報を付与して返す
    */
   function getDeparturesForStopGroup(stopGroup, dateStr, timeStr) {
     const activeServices = getActiveServicesForDate(dateStr);
     const departures = [];
+    const showPole = stopGroup.ids.length > 1;
 
     let targetSecs = 0;
-    if (timeStr) {
+    if (timeStr != null) {
       const parts = timeStr.split(':').map(Number);
       targetSecs = parts[0] * 3600 + parts[1] * 60;
     } else {
@@ -520,16 +664,11 @@
         if (st.departure_secs < targetSecs) return;
 
         const route = gtfsData.routes[trip.route_id];
-        // st.trip_id を第3引数として渡す（tripオブジェクト自体にはtrip_idフィールドがない）
         const routeName = getDisplayRouteName(trip, route, st.trip_id);
         const agencyName = route ? (gtfsData.agency[route.agency_id] || '路線バス') : '路線バス';
 
-        // このバス停がトリップの全停車数の中で何番目にあるかを計算して方向を判定
         const allStopTimes = stopTimesByTripId[st.trip_id] || [];
         const totalStops = allStopTimes.length;
-        const thisSeq = parseInt(st.stop_sequence, 10);
-        // 終着停留所名を行先グループキーとして使用
-        // カッコ内のヨミガナ（例: 「八雲車庫(やくもしゃこ)」→「八雲車庫」）を除去して統一する
         const rawLastName = totalStops > 0
           ? (stopNameById[allStopTimes[allStopTimes.length - 1].stop_id] || '')
           : '';
@@ -542,7 +681,9 @@
           routeName: routeName,
           agencyName: agencyName,
           trip_id: st.trip_id,
-          // 終着停留所名（方向グループキー）
+          stop_id: st.stop_id,
+          poleLabel: showPole ? getPoleLabel(st.stop_id) : '',
+          busLocUrl: (route && route.route_url) ? route.route_url : getStopBusLocUrl(st.stop_id),
           destStopName: lastStopName
         });
       });
@@ -556,9 +697,10 @@
    * コンパクト発車行（dep-row）のHTMLを生成する
    * @param {object} dep - getDeparturesForStopGroupの1件
    * @param {string} idsAttr - JSON.stringify(stopGroup.ids)
+   * @param {boolean} isToday - 本日表示かどうか（残り時間表示の判定用）
    */
-  function buildDepRowHtml(dep, idsAttr) {
-    const remaining = formatRemaining(dep.departure_secs);
+  function buildDepRowHtml(dep, idsAttr, isToday = true) {
+    const remaining = isToday ? formatRemaining(dep.departure_secs) : null;
     const isIchibata = dep.agencyName.includes('一畑');
     const barColor = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
     const badgeBg  = isIchibata ? 'var(--ichibata-subtle)' : 'var(--shiei-subtle)';
@@ -566,16 +708,20 @@
     const companyLabel = isIchibata ? '一畑' : '市営';
 
     return `
-      <div class="dep-row" data-trip-id="${escapeHtml(dep.trip_id)}" data-current-ids='${idsAttr}'>
+      <div class="dep-row" data-trip-id="${escapeHtml(dep.trip_id)}" data-origin-stop-id="${escapeHtml(dep.stop_id)}" data-current-ids='${idsAttr}'>
         <div class="dep-row-time">
           ${dep.departure_time.substring(0, 5)}
           ${remaining ? `<div class="dep-row-soon">${remaining}</div>` : ''}
         </div>
         <div class="dep-row-bar" style="background:${barColor}"></div>
         <div class="dep-row-info">
-          <div class="dep-row-route">${escapeHtml(dep.routeName)}</div>
+          <div class="dep-row-route" style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+            <span>${escapeHtml(dep.routeName)}</span>
+            ${dep.poleLabel ? `<span class="pole-badge">${escapeHtml(dep.poleLabel)}</span>` : ''}
+          </div>
           <div class="dep-row-headsign">→ ${escapeHtml(dep.trip_headsign)}</div>
         </div>
+        <a href="${escapeHtml(dep.busLocUrl)}" target="_blank" rel="noopener" class="busloc-link" title="公式バスロケーションでリアルタイム接近情報を確認">📡接近</a>
         <span class="dep-row-badge" style="background:${badgeBg}; color:${badgeCol}">${companyLabel}</span>
       </div>`;
   }
@@ -584,13 +730,34 @@
    * 時刻表タブ: バス停選択時に方向別のアコーディオンを描画する
    */
   function handleStopSelected(stopGroup) {
+    if (!stopGroup) return;
+    currentTimetableStopGroup = stopGroup;
+
     const container = $('#departures-container');
-    const dateStr = todayYYYYMMDD();
-    const deps = getDeparturesForStopGroup(stopGroup, dateStr, null);
+    const ttDateInput = $('#timetable-date');
+    const selectedDateStr = (ttDateInput && ttDateInput.value)
+      ? ttDateInput.value.replace(/-/g, '')
+      : todayYYYYMMDD();
+    const isToday = selectedDateStr === todayYYYYMMDD();
+
+    // 「始発から全便」モード、または今日以外の日付が選択されている場合は 00:00 から全便取得
+    const timeFilter = (timetableMode === 'all' || !isToday) ? '00:00' : null;
+    const deps = getDeparturesForStopGroup(stopGroup, selectedDateStr, timeFilter);
+
+    // URL状態を同期
+    syncUrlState({
+      tab: 'timetable',
+      stop: stopGroup.name,
+      date: selectedDateStr !== todayYYYYMMDD() ? selectedDateStr : '',
+      mode: timetableMode !== 'now' ? timetableMode : ''
+    });
 
     const isFav = FavoritesManager.isFavStop(stopGroup.name);
     const favIcon = isFav ? '★' : '☆';
     const favClass = isFav ? 'fav-active' : '';
+    const subTitleLabel = (timetableMode === 'all' || !isToday)
+      ? `${formatDateSlash(selectedDateStr)} 始発からの全便（方向をタップで展開）`
+      : '本日これからの発車（方向をタップで全便展開）';
 
     if (deps.length === 0) {
       container.innerHTML = `
@@ -598,28 +765,34 @@
           <div class="departures-header" style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div class="departures-station-name">${escapeHtml(stopGroup.name)}</div>
-              <div class="departures-date">本日これからの運行予定はありません</div>
+              <div class="departures-date">${escapeHtml(formatDateSlash(selectedDateStr))} の運行予定はありません</div>
             </div>
-            <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
+            <div class="header-actions-row">
+              <button type="button" class="share-url-btn" title="この時刻表のURLをコピー">🔗 共有</button>
+              <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
+            </div>
           </div>
           <div class="empty-state">
             <div class="empty-state-icon">🚌</div>
-            <div class="empty-state-text">本日の発車予定はありません</div>
+            <div class="empty-state-text">該当する発車予定はありません</div>
+            ${isToday && timetableMode === 'now' ? `<p style="font-size:12px; color:var(--text-secondary); margin-top:8px;">上部の「🌅 始発から全便」をタップすると本日の全時刻表を確認できます。</p>` : ''}
           </div>
         </div>`;
       setupFavStopButton(container.querySelector('.fav-toggle-btn'));
+      const shareBtn = container.querySelector('.share-url-btn');
+      if (shareBtn) shareBtn.addEventListener('click', copyShareUrl);
       return;
     }
 
     // 行先（終着停留所）別にグループ化
-    const groups = new Map(); // destKey -> [dep, ...]
+    const groups = new Map();
     deps.forEach(dep => {
       const key = dep.destStopName || dep.trip_headsign;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(dep);
     });
 
-    // 各グループの最初の便（次の1本）の departure_secs で昇順ソート
+    // 各グループの最初の便の departure_secs で昇順ソート
     const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
       const aFirst = a[1][0].departure_secs;
       const bFirst = b[1][0].departure_secs;
@@ -631,14 +804,13 @@
     let groupsHtml = '';
     sortedGroups.forEach(([destName, arr]) => {
       const nextDep = arr[0];
-      const remaining = formatRemaining(nextDep.departure_secs);
+      const remaining = isToday ? formatRemaining(nextDep.departure_secs) : null;
       const isIchibata = nextDep.agencyName.includes('一畑');
       const companyLabel = isIchibata ? '一畑' : '市営';
       const badgeBg = isIchibata ? 'var(--ichibata-subtle)' : 'var(--shiei-subtle)';
       const badgeCol = isIchibata ? 'var(--ichibata)' : 'var(--shiei)';
 
-      // 全ての便（1本目含む）をアコーディオンのボディに配置
-      const depRowsHtml = arr.map(dep => buildDepRowHtml(dep, idsAttr)).join('');
+      const depRowsHtml = arr.map(dep => buildDepRowHtml(dep, idsAttr, isToday)).join('');
 
       groupsHtml += `
         <div class="dir-group">
@@ -648,6 +820,7 @@
               <div class="dir-next-info">
                 <span class="dir-next-time">${nextDep.departure_time.substring(0, 5)}</span>
                 <span class="dir-next-route">${escapeHtml(nextDep.routeName)}</span>
+                ${nextDep.poleLabel ? `<span class="pole-badge">${escapeHtml(nextDep.poleLabel)}</span>` : ''}
                 ${remaining ? `<span class="dir-next-remaining">${remaining}</span>` : ''}
                 <span class="dir-next-company" style="background:${badgeBg}; color:${badgeCol}">${companyLabel}</span>
               </div>
@@ -670,9 +843,12 @@
         <div class="departures-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div class="departures-station-name">${escapeHtml(stopGroup.name)}</div>
-            <div class="departures-date">本日これからの発車（方向をタップで全便展開）</div>
+            <div class="departures-date">${escapeHtml(subTitleLabel)}</div>
           </div>
-          <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
+          <div class="header-actions-row">
+            <button type="button" class="share-url-btn" title="この時刻表のURLをコピー">🔗 共有</button>
+            <button class="fav-toggle-btn ${favClass}" data-stop-name="${escapeHtml(stopGroup.name)}" aria-label="お気に入り登録">${favIcon}</button>
+          </div>
         </div>
         <div class="dir-groups-container">
           ${groupsHtml}
@@ -680,6 +856,8 @@
       </div>`;
 
     setupFavStopButton(container.querySelector('.fav-toggle-btn'));
+    const shareBtn = container.querySelector('.share-url-btn');
+    if (shareBtn) shareBtn.addEventListener('click', copyShareUrl);
   }
 
   function setupFavStopButton(btn) {
@@ -696,13 +874,13 @@
 
   // ===== 経路検索タブのロジック =====
 
-
   /**
-   * 直通バスの経路を検索
+   * 直通バスの経路を検索（運賃・のりば番号・バスロケURL付き）
    */
   function searchDirectRoutes(fromGroup, toGroup, dateStr, timeStr, searchType) {
     const activeServices = getActiveServicesForDate(dateStr);
     const routesFound = [];
+    const showPole = fromGroup.ids.length > 1;
 
     let targetSecs = 0;
     if (searchType === 'first') {
@@ -742,13 +920,18 @@
           if (searchType === 'arrival' && stTo.departure_secs > targetSecs) return;
 
           const route = gtfsData.routes[trip.route_id];
-          // tripId（辞書のキー）を第3引数として渡す（tripオブジェクト自体にはtrip_idフィールドがない）
           const routeName = getDisplayRouteName(trip, route, tripId);
           const agencyName = route ? (gtfsData.agency[route.agency_id] || '路線バス') : '路線バス';
           const durationSecs = stTo.departure_secs - stFrom.departure_secs;
+          const fare = getFare(stFrom.stop_id, stTo.stop_id);
 
           routesFound.push({
             trip_id: tripId,
+            from_stop_id: stFrom.stop_id,
+            to_stop_id: stTo.stop_id,
+            poleLabel: showPole ? getPoleLabel(stFrom.stop_id) : '',
+            fare: fare,
+            busLocUrl: (route && route.route_url) ? route.route_url : getStopBusLocUrl(stFrom.stop_id),
             routeName: routeName,
             agencyName: agencyName,
             trip_headsign: trip.trip_headsign || '不明',
@@ -771,6 +954,77 @@
     }
 
     return routesFound;
+  }
+
+  /**
+   * 主要拠点（松江駅・県民会館前など）での1回乗り継ぎ経路を探索する
+   */
+  function searchTransferRoutes(fromGroup, toGroup, dateStr, timeStr, searchType) {
+    const MIN_TRANSFER_SECS = 5 * 60;  // 最低乗換時間 5分
+    const MAX_TRANSFER_SECS = 45 * 60; // 最大待ち時間 45分
+    const candidatesByFirstTrip = new Map();
+
+    MAJOR_TRANSFER_HUBS.forEach(hubName => {
+      if (hubName === fromGroup.name || hubName === toGroup.name) return;
+      const hubGroup = stopIndex.find(s => s.name === hubName);
+      if (!hubGroup) return;
+
+      // 第1区間: 出発地 -> ハブ停留所
+      const leg1Type = (searchType === 'arrival') ? 'first' : searchType;
+      const leg1Routes = searchDirectRoutes(fromGroup, hubGroup, dateStr, timeStr, leg1Type);
+      if (leg1Routes.length === 0) return;
+
+      // 第2区間: ハブ停留所 -> 目的地（全便取得して接続判定）
+      const leg2All = searchDirectRoutes(hubGroup, toGroup, dateStr, '00:00', 'first');
+      if (leg2All.length === 0) return;
+
+      leg1Routes.slice(0, 15).forEach(l1 => {
+        const minDep2 = l1.arrival_secs + MIN_TRANSFER_SECS;
+        const maxDep2 = l1.arrival_secs + MAX_TRANSFER_SECS;
+
+        const matchingLeg2 = leg2All.find(l2 => {
+          if (l2.trip_id === l1.trip_id) return false;
+          if (l2.departure_secs < minDep2 || l2.departure_secs > maxDep2) return false;
+          if (searchType === 'arrival' && timeStr) {
+            const parts = timeStr.split(':').map(Number);
+            const limitSecs = parts[0] * 3600 + parts[1] * 60;
+            if (l2.arrival_secs > limitSecs) return false;
+          }
+          return true;
+        });
+
+        if (matchingLeg2) {
+          const waitMins = Math.round((matchingLeg2.departure_secs - l1.arrival_secs) / 60);
+          const totalDurationSecs = matchingLeg2.arrival_secs - l1.departure_secs;
+          const totalFare = (l1.fare != null && matchingLeg2.fare != null) ? (l1.fare + matchingLeg2.fare) : null;
+
+          const existing = candidatesByFirstTrip.get(l1.trip_id);
+          if (!existing || matchingLeg2.arrival_secs < existing.arrival_secs) {
+            candidatesByFirstTrip.set(l1.trip_id, {
+              hubName: hubName,
+              hubGroup: hubGroup,
+              leg1: l1,
+              leg2: matchingLeg2,
+              waitMins: waitMins,
+              departure_secs: l1.departure_secs,
+              arrival_secs: matchingLeg2.arrival_secs,
+              totalDurationSecs: totalDurationSecs,
+              totalFare: totalFare
+            });
+          }
+        }
+      });
+    });
+
+    const results = Array.from(candidatesByFirstTrip.values());
+    if (searchType === 'last') {
+      results.sort((a, b) => b.departure_secs - a.departure_secs);
+    } else if (searchType === 'arrival') {
+      results.sort((a, b) => b.arrival_secs - a.arrival_secs);
+    } else {
+      results.sort((a, b) => a.arrival_secs - b.arrival_secs);
+    }
+    return results.slice(0, 3);
   }
 
   function handleRouteSearch() {
@@ -799,7 +1053,7 @@
       <div class="glass-card">
         <div class="loading-container">
           <div class="spinner"></div>
-          <div class="loading-text">直通便を探索中...</div>
+          <div class="loading-text">直通便・乗り継ぎ便を探索中...</div>
         </div>
       </div>`;
 
@@ -807,23 +1061,89 @@
     const timeVal = $('#route-time').value || null;
     const typeVal = $('#route-type').value || 'departure';
 
+    // URLクエリパラメータを同期
+    syncUrlState({
+      tab: 'route',
+      from: fromGroup.name,
+      to: toGroup.name,
+      date: dateVal !== todayYYYYMMDD() ? dateVal : '',
+      time: timeVal || '',
+      type: typeVal !== 'departure' ? typeVal : ''
+    });
+
     setTimeout(() => {
-      const routes = searchDirectRoutes(fromGroup, toGroup, dateVal, timeVal, typeVal);
-      renderRouteResults(resultsContainer, routes, fromGroup, toGroup);
-    }, 100);
+      const directRoutes = searchDirectRoutes(fromGroup, toGroup, dateVal, timeVal, typeVal);
+      // 直通便が2本以下の場合は主要拠点での1回乗り継ぎルートも探索
+      const transferRoutes = directRoutes.length <= 2
+        ? searchTransferRoutes(fromGroup, toGroup, dateVal, timeVal, typeVal)
+        : [];
+      renderRouteResults(resultsContainer, directRoutes, transferRoutes, fromGroup, toGroup);
+    }, 80);
   }
 
-  function renderRouteResults(container, routes, fromGroup, toGroup) {
-    if (routes.length === 0) {
+  /**
+   * 1回乗り継ぎカードのHTMLを生成する
+   */
+  function buildTransferCardsHtml(transferRoutes, fromGroup, toGroup) {
+    if (!transferRoutes || transferRoutes.length === 0) return '';
+    const cards = transferRoutes.map(tr => {
+      const totalMins = Math.round(tr.totalDurationSecs / 60);
+      const isIchibata1 = tr.leg1.agencyName.includes('一畑');
+      const isIchibata2 = tr.leg2.agencyName.includes('一畑');
+      const currentIds = [...fromGroup.ids, ...tr.hubGroup.ids, ...toGroup.ids];
+      const idsAttr = JSON.stringify(currentIds);
+
+      return `
+        <div class="transfer-card fade-in" data-trip-id="${escapeHtml(tr.leg1.trip_id)}" data-leg2-trip-id="${escapeHtml(tr.leg2.trip_id)}" data-origin-stop-id="${escapeHtml(tr.leg1.from_stop_id)}" data-current-ids='${idsAttr}'>
+          <div class="transfer-header">
+            <div class="transfer-times">
+              ${tr.leg1.departure_time.substring(0, 5)} <span style="color:var(--text-muted); font-size:14px;">→</span> ${tr.leg2.arrival_time.substring(0, 5)}
+            </div>
+            <div class="transfer-badges">
+              <span style="font-size:11px; background:var(--accent-subtle); color:var(--accent); padding:2px 7px; border-radius:4px; font-weight:600;">
+                乗換1回・計${totalMins}分
+              </span>
+              ${tr.totalFare != null ? `<span class="fare-badge">合算 ¥${tr.totalFare}</span>` : ''}
+            </div>
+          </div>
+          <div class="transfer-leg-row">
+            <span class="transfer-leg-time">${tr.leg1.departure_time.substring(0, 5)}〜${tr.leg1.arrival_time.substring(0, 5)}</span>
+            <span style="color:${isIchibata1 ? 'var(--ichibata)' : 'var(--shiei)'}; font-weight:700;">●</span>
+            <span style="font-weight:600; color:var(--text-primary);">${escapeHtml(tr.leg1.routeName)}</span>
+            ${tr.leg1.fare != null ? `<span style="color:var(--text-muted); font-size:11px;">(¥${tr.leg1.fare})</span>` : ''}
+          </div>
+          <div class="transfer-wait-row">
+            🔄 <strong>${escapeHtml(tr.hubName)}</strong> で乗り継ぎ（待ち ${tr.waitMins}分）
+          </div>
+          <div class="transfer-leg-row">
+            <span class="transfer-leg-time">${tr.leg2.departure_time.substring(0, 5)}〜${tr.leg2.arrival_time.substring(0, 5)}</span>
+            <span style="color:${isIchibata2 ? 'var(--ichibata)' : 'var(--shiei)'}; font-weight:700;">●</span>
+            <span style="font-weight:600; color:var(--text-primary);">${escapeHtml(tr.leg2.routeName)}</span>
+            ${tr.leg2.fare != null ? `<span style="color:var(--text-muted); font-size:11px;">(¥${tr.leg2.fare})</span>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="section-label" style="margin-top:20px; margin-bottom:6px;">🔄 主要バス停での1回乗り継ぎ候補（タップで停車駅表示）</div>
+      ${cards}`;
+  }
+
+  function renderRouteResults(container, routes, transferRoutes, fromGroup, toGroup) {
+    const isFavRoute = FavoritesManager.isFavRoute(fromGroup.name, toGroup.name);
+    const favIcon = isFavRoute ? '★' : '☆';
+    const favClass = isFavRoute ? 'fav-active' : '';
+
+    if (routes.length === 0 && (!transferRoutes || transferRoutes.length === 0)) {
       container.innerHTML = `
         <div class="glass-card fade-in">
           <div class="empty-state">
             <div class="empty-state-icon">🗺️</div>
-            <div class="empty-state-text">本日、直通するバス便はありません。</div>
+            <div class="empty-state-text">指定条件で直通・主要拠点乗り継ぎできるバス便はありません。</div>
             <p style="color:var(--text-secondary); font-size:13px; margin: 8px 24px; text-align:center;">
-              乗り継ぎが必要な可能性があります。外部の乗り換え案内サービスをご利用ください。
+              徒歩を含むルートや他社線との乗り継ぎは外部サービスをご利用ください。
             </p>
-            <div style="display:flex; gap:10px; margin-top:16px;">
+            <div style="display:flex; justify-content:center; gap:10px; margin-top:16px;">
               <a href="https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromGroup.name + ' バス停')}&destination=${encodeURIComponent(toGroup.name + ' バス停')}&travelmode=transit" 
                  target="_blank" rel="noopener" class="quick-stop-btn" style="text-decoration:none;">
                 Google マップで検索
@@ -847,7 +1167,7 @@
       const idsAttr = JSON.stringify(currentIds);
 
       return `
-        <div class="departure-card fade-in stagger-${i + 1}" data-trip-id="${escapeHtml(r.trip_id)}" data-current-ids='${idsAttr}'>
+        <div class="departure-card fade-in stagger-${i + 1}" data-trip-id="${escapeHtml(r.trip_id)}" data-origin-stop-id="${escapeHtml(r.from_stop_id)}" data-current-ids='${idsAttr}'>
           <div class="departure-card-main">
             <div style="display:flex; flex-direction:column; width:64px; justify-content:center; align-items:flex-start;">
               <span class="departure-time" style="font-size:22px; font-weight:700;">
@@ -864,32 +1184,39 @@
                 <span style="font-size:11px; background:var(--accent-subtle); color:var(--accent); padding:1px 6px; border-radius:4px; font-weight:normal;">
                   直通 ${durationMins}分
                 </span>
+                ${r.fare != null ? `<span class="fare-badge">¥${r.fare}</span>` : ''}
+                ${r.poleLabel ? `<span class="pole-badge">${escapeHtml(r.poleLabel)}</span>` : ''}
               </div>
               <div class="departure-headsign" style="margin-top:2px;">
                 <span>→ ${escapeHtml(r.trip_headsign)}行</span>
               </div>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:2px; display:flex; justify-content:space-between; width:100%;">
+              <div style="font-size:11px; color:var(--text-muted); margin-top:4px; display:flex; align-items:center; justify-content:space-between; width:100%;">
                 <span>${isIchibata ? '🔴一畑バス' : '🔵松江市営バス'}</span>
+                <a href="${escapeHtml(r.busLocUrl)}" target="_blank" rel="noopener" class="busloc-link">📡 接近情報</a>
               </div>
             </div>
           </div>
         </div>`;
     }).join('');
 
-    const isFavRoute = FavoritesManager.isFavRoute(fromGroup.name, toGroup.name);
-    const favIcon = isFavRoute ? '★' : '☆';
-    const favClass = isFavRoute ? 'fav-active' : '';
+    const transferHtml = buildTransferCardsHtml(transferRoutes, fromGroup, toGroup);
 
     container.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="section-label" style="margin-bottom:0;">検索結果 (最大${maxResults}件・タップで途中駅表示)</div>
-        <button class="fav-toggle-route-btn ${favClass}" data-from="${escapeHtml(fromGroup.name)}" data-to="${escapeHtml(toGroup.name)}" aria-label="経路をお気に入り登録">
-          ${favIcon} 経路を保存
-        </button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; margin-bottom:8px;">
+        <div class="section-label" style="margin-bottom:0;">
+          ${routes.length > 0 ? `直通検索結果 (最大${maxResults}件・タップで途中駅表示)` : '直通便なし（乗り継ぎ候補を表示中）'}
+        </div>
+        <div class="header-actions-row">
+          <button type="button" class="share-url-btn" title="この検索結果のURLをコピー">🔗 共有</button>
+          <button class="fav-toggle-route-btn ${favClass}" data-from="${escapeHtml(fromGroup.name)}" data-to="${escapeHtml(toGroup.name)}" aria-label="経路をお気に入り登録">
+            ${favIcon} 経路を保存
+          </button>
+        </div>
       </div>
       ${routesHtml}
+      ${transferHtml}
       <div style="text-align:center; margin-top:16px;">
-        <span style="font-size:12px; color:var(--text-muted);">乗り継ぎ経路を検索したい場合は：</span>
+        <span style="font-size:12px; color:var(--text-muted);">その他の乗り継ぎ経路を検索したい場合は：</span>
         <div style="display:flex; justify-content:center; gap:10px; margin-top:8px;">
           <a href="https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromGroup.name + ' バス停')}&destination=${encodeURIComponent(toGroup.name + ' バス停')}&travelmode=transit" 
              target="_blank" rel="noopener" class="quick-stop-btn" style="text-decoration:none; font-size:12px;">
@@ -912,6 +1239,11 @@
         favBtn.classList.toggle('fav-active', isNowFav);
         renderFavRoutes();
       });
+    }
+
+    const shareBtn = container.querySelector('.share-url-btn');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', copyShareUrl);
     }
   }
 
@@ -1020,6 +1352,78 @@
     };
   }
 
+  /**
+   * 途中停留所タイムラインHTMLを生成する（運賃・時刻表ジャンプ・目的地セットボタン付き）
+   */
+  function buildTimelineHtml(stopTimes, currentIds, originStopId) {
+    let passedOrigin = false;
+    return stopTimes.map(st => {
+      const name = stopNameById[st.stop_id] || '不明';
+      const isCurrent = currentIds.includes(st.stop_id);
+      if (originStopId && st.stop_id === originStopId) {
+        passedOrigin = true;
+      }
+      const stepFare = (passedOrigin && originStopId && st.stop_id !== originStopId)
+        ? getFare(originStopId, st.stop_id)
+        : null;
+
+      return `
+        <div class="timeline-stop ${isCurrent ? 'current' : ''}">
+          <div class="timeline-stop-main">
+            <div class="timeline-time">${st.departure_time.substring(0, 5)}</div>
+            <div class="timeline-node"></div>
+            <div class="timeline-name">
+              ${escapeHtml(name)}
+              ${stepFare != null ? `<span class="fare-badge" style="margin-left:6px; font-weight:600;">¥${stepFare}</span>` : ''}
+            </div>
+          </div>
+          <div class="timeline-actions">
+            <button type="button" class="timeline-action-btn" data-tl-action="timetable" data-stop-name="${escapeHtml(name)}" title="${escapeHtml(name)}の時刻表を見る">🕐時刻表</button>
+            <button type="button" class="timeline-action-btn" data-tl-action="route-to" data-stop-name="${escapeHtml(name)}" title="${escapeHtml(name)}を目的地にして経路検索">🏁ここへ</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  /**
+   * URLクエリパラメータから初期検索状態を復元する
+   */
+  function restoreStateFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    const stop = params.get('stop');
+    const from = params.get('from');
+    const to = params.get('to');
+    const date = params.get('date');
+    const time = params.get('time');
+    const type = params.get('type');
+    const mode = params.get('mode');
+
+    if (tab === 'timetable' || (stop && !from)) {
+      switchTab('timetable');
+      if (date && date.length === 8 && $('#timetable-date')) {
+        $('#timetable-date').value = `${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}`;
+      }
+      if (mode === 'all') {
+        timetableMode = 'all';
+        $$('.tt-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.ttMode === 'all'));
+      }
+      if (stop && timetableAutocomplete) {
+        timetableAutocomplete.setQuery(stop);
+      }
+    } else if (from && to) {
+      switchTab('route');
+      $('#route-from-input').value = from;
+      $('#route-to-input').value = to;
+      if (date && date.length === 8) {
+        $('#route-date').value = `${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}`;
+      }
+      if (time) $('#route-time').value = time;
+      if (type) $('#route-type').value = type;
+      handleRouteSearch();
+    }
+  }
+
   // ===== 初期起動フロー (事前パース済みデータロード) =====
   function loadGTFS() {
     const overlay = $('#loading-overlay');
@@ -1038,6 +1442,7 @@
       setTimeout(() => {
         buildIndex();
         initTabsAndInputs();
+        restoreStateFromUrl();
         overlay.classList.add('fade-out');
       }, 100);
 
@@ -1053,6 +1458,37 @@
       dropdown: $('#stop-search-results'),
       clearBtn: $('#stop-search-clear'),
       onSelect: handleStopSelected
+    });
+
+    // 時刻表タブの日付初期化とモード切替イベント
+    const ttDateInput = $('#timetable-date');
+    if (ttDateInput) {
+      ttDateInput.value = todayISO();
+      ttDateInput.addEventListener('change', () => {
+        if (currentTimetableStopGroup) {
+          handleStopSelected(currentTimetableStopGroup);
+        }
+      });
+    }
+
+    const btnTtToday = $('#btn-timetable-today');
+    if (btnTtToday && ttDateInput) {
+      btnTtToday.addEventListener('click', () => {
+        ttDateInput.value = todayISO();
+        if (currentTimetableStopGroup) {
+          handleStopSelected(currentTimetableStopGroup);
+        }
+      });
+    }
+
+    $$('.tt-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        timetableMode = btn.dataset.ttMode || 'now';
+        $$('.tt-mode-btn').forEach(b => b.classList.toggle('active', b === btn));
+        if (currentTimetableStopGroup) {
+          handleStopSelected(currentTimetableStopGroup);
+        }
+      });
     });
 
     // クイックアクセス: 松江駅
@@ -1076,7 +1512,6 @@
           return;
         }
 
-        // ローディング表示
         departuresContainer.innerHTML = `
           <div class="glass-card fade-in">
             <div class="nearby-loading">
@@ -1090,7 +1525,6 @@
             const lat = position.coords.latitude;
             const lon = position.coords.longitude;
 
-            // 近くのバス停を検索 (緯度経度が設定されているもの)
             const scored = stopIndex
               .filter(s => s.lat != null && s.lon != null)
               .map(s => {
@@ -1106,7 +1540,6 @@
               return;
             }
 
-            // HTML生成
             const rowsHtml = nearby.map(item => {
               const distStr = item.distance < 1000
                 ? `${Math.round(item.distance)}m`
@@ -1159,7 +1592,6 @@
         </div>`;
     }
 
-
     const routeFromAC = initAutocomplete({
       input: $('#route-from-input'),
       dropdown: $('#route-from-results'),
@@ -1210,7 +1642,6 @@
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
 
-          // 最も近い停留所を1件取得
           let nearest = null;
           let minDist = Infinity;
           stopIndex.forEach(s => {
@@ -1263,12 +1694,23 @@
 
     $('#route-date').value = todayISO();
     $('#route-time').value = nowHHMM();
+  }
 
+  /**
+   * PWA用 Service Worker の登録
+   */
+  function registerServiceWorker() {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.protocol === 'http:')) {
+      navigator.serviceWorker.register('./sw.js').catch(err => {
+        console.warn('ServiceWorker registration skipped:', err);
+      });
+    }
   }
 
   // ===== メイン初期化 & イベントリスニング =====
   document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    registerServiceWorker();
 
     $$('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1276,8 +1718,40 @@
       });
     });
 
-    // 時刻表・経路検索の行/カードタップ時の途中停留所タイムライン表示
+    // 時刻表・経路検索の行/カードタップ時の途中停留所タイムライン表示・操作
     document.addEventListener('click', (e) => {
+      // タイムライン内のアクションボタン（🕐時刻表 / 🏁ここへ）の処理
+      const tlActionBtn = e.target.closest('.timeline-action-btn');
+      if (tlActionBtn) {
+        e.stopPropagation();
+        const action = tlActionBtn.dataset.tlAction;
+        const stopName = tlActionBtn.dataset.stopName;
+        if (!stopName) return;
+
+        if (action === 'timetable') {
+          switchTab('timetable');
+          if (timetableAutocomplete) {
+            timetableAutocomplete.setQuery(stopName);
+          }
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (action === 'route-to') {
+          switchTab('route');
+          const fromInput = $('#route-from-input');
+          const toInput = $('#route-to-input');
+          if (fromInput && !fromInput.value.trim() && currentTimetableStopGroup) {
+            fromInput.value = currentTimetableStopGroup.name;
+          }
+          if (toInput) {
+            toInput.value = stopName;
+          }
+          if (fromInput && fromInput.value.trim() && toInput && toInput.value.trim()) {
+            handleRouteSearch();
+          }
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        return;
+      }
+
       // リンクがタップされた場合はトグルしない
       if (e.target.closest('a')) return;
       // チップクリックも無視
@@ -1311,7 +1785,6 @@
       // dep-row（時刻表タブの行スタイル）の処理
       const row = e.target.closest('.dep-row');
       if (row) {
-        // 既に展開中なら閉じる
         const existingDetails = row.nextElementSibling;
         if (existingDetails && existingDetails.classList.contains('dep-row-details')) {
           existingDetails.remove();
@@ -1321,20 +1794,12 @@
 
         const tripId = row.dataset.tripId;
         if (!tripId) return;
+        const originStopId = row.dataset.originStopId || '';
         let currentIds = [];
         try { currentIds = JSON.parse(row.dataset.currentIds || '[]'); } catch {}
 
         const stopTimes = stopTimesByTripId[tripId] || [];
-        const timelineHtml = stopTimes.map(st => {
-          const name = stopNameById[st.stop_id] || '不明';
-          const isCurrent = currentIds.includes(st.stop_id);
-          return `
-            <div class="timeline-stop ${isCurrent ? 'current' : ''}">
-              <div class="timeline-time">${st.departure_time.substring(0, 5)}</div>
-              <div class="timeline-node"></div>
-              <div class="timeline-name">${escapeHtml(name)}</div>
-            </div>`;
-        }).join('');
+        const timelineHtml = buildTimelineHtml(stopTimes, currentIds, originStopId);
 
         const detailsDiv = document.createElement('div');
         detailsDiv.className = 'dep-row-details fade-in';
@@ -1344,14 +1809,13 @@
             ${timelineHtml}
           </div>`;
 
-        // dep-row の直後に挿入
         row.classList.add('expanded');
         row.insertAdjacentElement('afterend', detailsDiv);
         return;
       }
 
-      // departure-card（経路検索タブのカードスタイル）の処理
-      const card = e.target.closest('.departure-card');
+      // departure-card / transfer-card（経路検索タブのカードスタイル）の処理
+      const card = e.target.closest('.departure-card, .transfer-card');
       if (!card) return;
 
       const details = card.querySelector('.trip-details');
@@ -1363,29 +1827,35 @@
 
       const tripId = card.dataset.tripId;
       if (!tripId) return;
+      const leg2TripId = card.dataset.leg2TripId || '';
+      const originStopId = card.dataset.originStopId || '';
       let currentIds = [];
       try { currentIds = JSON.parse(card.dataset.currentIds || '[]'); } catch {}
 
       const detailsDiv = document.createElement('div');
       detailsDiv.className = 'trip-details fade-in';
 
-      const stopTimes = stopTimesByTripId[tripId] || [];
-      const timelineHtml = stopTimes.map(st => {
-        const name = stopNameById[st.stop_id] || '不明';
-        const isCurrent = currentIds.includes(st.stop_id);
-        return `
-          <div class="timeline-stop ${isCurrent ? 'current' : ''}">
-            <div class="timeline-time">${st.departure_time.substring(0, 5)}</div>
-            <div class="timeline-node"></div>
-            <div class="timeline-name">${escapeHtml(name)}</div>
+      const stopTimes1 = stopTimesByTripId[tripId] || [];
+      const timelineHtml1 = buildTimelineHtml(stopTimes1, currentIds, originStopId);
+
+      let leg2SectionHtml = '';
+      if (leg2TripId) {
+        const stopTimes2 = stopTimesByTripId[leg2TripId] || [];
+        const timelineHtml2 = buildTimelineHtml(stopTimes2, currentIds, '');
+        leg2SectionHtml = `
+          <div style="font-size:11px; font-weight:700; color:var(--amber); margin: 12px 0 8px 8px;">🔄 乗り継ぎ後の停車駅</div>
+          <div class="timeline-container">
+            <div class="timeline-line"></div>
+            ${timelineHtml2}
           </div>`;
-      }).join('');
+      }
 
       detailsDiv.innerHTML = `
         <div class="timeline-container">
           <div class="timeline-line"></div>
-          ${timelineHtml}
-        </div>`;
+          ${timelineHtml1}
+        </div>
+        ${leg2SectionHtml}`;
 
       card.appendChild(detailsDiv);
       card.classList.add('expanded');
